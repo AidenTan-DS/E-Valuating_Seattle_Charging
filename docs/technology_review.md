@@ -25,3 +25,5 @@ When comparing the status of the GitHub repositories, plotly’s generalized nat
 
 ## Library Chosen: Plotly
 For this application, we decided to use the Plotly library to create an interactive map for our use case. Plotly is more compatible with Streamlit, allowing for richer interactivity and scalability. We aim to display additional information for the user, like population, income, and EV registration and Plotly is better suited for this function than Folium. Streamlit includes built in functions that directly render Plotly figures and allows them to update dynamically with user inputs, making it easy to build our responsive map. In contrast, Folium renders HTML/leaflet outputs which can limit reactivity and require additional workarounds to work with streamlit. 
+
+Video Demo: https://drive.google.com/file/d/1hw3xF1CYJK5QbcjvmoRk8X_l0-wCW6AT/view 
