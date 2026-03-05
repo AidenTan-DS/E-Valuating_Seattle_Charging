@@ -1,0 +1,6 @@
+pandas
+numpy
+geopandas
+streamlit
+plotly
+pylint==3.3.3
