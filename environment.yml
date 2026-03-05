@@ -1,0 +1,11 @@
+name: evaluating_seattle_charging
+channels:
+  - conda-forge
+dependencies:
+  - python = 3.13.5
+  - pandas
+  - numpy
+  - geopandas
+  - streamlit
+  - plotly
+  - pylint = 3.3.3
