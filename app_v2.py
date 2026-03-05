@@ -15,7 +15,7 @@ import streamlit as st
 
 # ── file paths ────────────────────────────────────────────────────────────────
 EV_PATH      = "ev_station.csv"
-TRAFFIC_PATH = "all_variables.csv"
+TRAFFIC_PATH = "data/cleaned/all_variables.csv"
 ZCTA_PATH    = "zcta.json"
 STREETS_PATH = "seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
 
