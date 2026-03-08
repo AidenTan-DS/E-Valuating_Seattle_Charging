@@ -14,10 +14,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ── file paths ────────────────────────────────────────────────────────────────
-EV_PATH      = "ev_station.csv"
+EV_PATH      = "data/cleaned/ev_station.csv"
 TRAFFIC_PATH = "data/cleaned/all_variables.csv"
-ZCTA_PATH    = "zcta.json"
-STREETS_PATH = "seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
+ZCTA_PATH    = "data/geo/zcta.json"
+STREETS_PATH = "data/geo/seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
 
 st.set_page_config(page_title="Seattle EV Explorer", page_icon="⚡", layout="wide")
 
