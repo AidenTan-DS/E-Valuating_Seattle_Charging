@@ -528,6 +528,23 @@ def main():
         left_col, right_col = st.columns([1, 1], gap="medium")
 
         with left_col:
+            zip_options = [None] + sorted(valid_zips)
+            zip_select  = st.selectbox(
+                "Enter ZIP code",
+                options     = zip_options,
+                index       = zip_options.index(sel) if sel in zip_options else 0,
+                format_func = lambda z: "— Select ZIP —" if z is None else z,
+                placeholder = "Type to search…",
+            )
+            if zip_select and zip_select != sel:
+                st.session_state.selected_zip   = zip_select
+                st.session_state.last_event_key = None
+                st.rerun()
+            elif zip_select is None and sel is not None:
+                st.session_state.selected_zip   = None
+                st.session_state.last_event_key = None
+                st.session_state.map_version   += 1
+                st.rerun()
             map_fragment()
 
         with right_col:
