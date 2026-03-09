@@ -14,16 +14,17 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ── file paths ────────────────────────────────────────────────────────────────
-EV_PATH      = "ev_station.csv"
+EV_PATH      = "data/cleaned/ev_station.csv"
 TRAFFIC_PATH = "data/cleaned/all_variables.csv"
-ZCTA_PATH    = "zcta.json"
-STREETS_PATH = "seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
+DEMAND_PATH  = "data/cleaned/demand_gap.csv"
+ZCTA_PATH    = "data/geo/zcta.json"
+STREETS_PATH = "data/geo/seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
 
 st.set_page_config(page_title="Seattle EV Explorer", page_icon="⚡", layout="wide")
 
 # ── ADT colour bins ───────────────────────────────────────────────────────────
-ADT_BINS   = [0, 10_000, 20_000, 35_000, 50_000, float("inf")]
-ADT_LABELS = ["< 10K", "10K – 20K", "20K – 35K", "35K – 50K", "> 50K"]
+ADT_BINS   = [0, 500, 3_800, 6_700, 12_000, float("inf")]
+ADT_LABELS = ["< 500", "500 – 3.8K", "3.8K – 6.7K", "6.7K – 12K", "> 12K"]
 ADT_COLORS = ["#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554"]
 ADT_WIDTHS = [2.0, 3.0, 4.0, 5.0, 6.5]
 
@@ -136,6 +137,12 @@ def build_geojson(zcta_gdf: gpd.GeoDataFrame, zip_set: set) -> dict:
 # Cached loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
+def load_demand_gap() -> pd.DataFrame:
+    df = pd.read_csv(DEMAND_PATH)
+    df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
+    return df[["zip_code", "demand_gap"]].rename(columns={"zip_code": "ZIP"})
+
+
 @st.cache_data(show_spinner="Loading data…")
 def load_all():
     zcta_gdf  = load_zcta()
@@ -144,6 +151,8 @@ def load_all():
     ev_by_zip = aggregate_ev_by_zip(ev_df)
     t_by_zip  = aggregate_traffic_from_csv()
     scored    = build_master(ev_by_zip, t_by_zip)
+    demand_df = load_demand_gap()
+    scored    = scored.merge(demand_df, on="ZIP", how="left")
     return zcta_gdf, ev_df, scored
 
 
@@ -503,110 +512,152 @@ def main():
     sel = st.session_state.selected_zip
 
     st.title("⚡ Seattle EV Station Explorer")
-    st.info(
-        "**How to use this map**  \n"
-        "- The left map shows **average daily traffic flow** by ZIP code — darker orange = higher traffic.  \n"
-        "- Green dots are **EV charging stations**. Hover over a dot to see station details.  \n"
-        "- **Click any ZIP area or station** to load the road network map and charging stats on the right.",
-        icon="ℹ️",
-    )
 
-    left_col, right_col = st.columns([1, 1], gap="medium")
+    tab1, tab2 = st.tabs(["📍 Location", "⭐ Evaluation"])
 
-    with left_col:
-        map_fragment()
+    # ── Tab 1: Location ───────────────────────────────────────────────────────
+    with tab1:
+        st.info(
+            "**How to use this map**  \n"
+            "- The left map shows **average daily traffic flow** by ZIP code — darker orange = higher traffic.  \n"
+            "- Green dots are **EV charging stations**. Hover over a dot to see station details.  \n"
+            "- **Click any ZIP area or station** to load the road network map and charging stats on the right.",
+            icon="ℹ️",
+        )
 
-    with right_col:
-        if sel:
-            scored_row = scored[scored["ZIP"] == sel]
-            ev_in_zip  = ev_df[ev_df["ZIP"] == sel]
-            city_val   = scored_row["city"].iloc[0] if not scored_row.empty else "—"
-            pop_val    = int(scored_row["population"].iloc[0]) if not scored_row.empty else None
-            income_val = scored_row["med_income"].iloc[0] if not scored_row.empty else None
-            ev_reg_val = scored_row["ev_registrations"].iloc[0] if not scored_row.empty else None
+        left_col, right_col = st.columns([1, 1], gap="medium")
 
-            hdr_col, btn_col = st.columns([5, 1])
-            hdr_col.markdown(f"### {city_val} · ZIP {sel}")
-            if btn_col.button("✕ Clear", use_container_width=True):
+        with left_col:
+            zip_options = [None] + sorted(valid_zips)
+            zip_select  = st.selectbox(
+                "Enter ZIP code",
+                options     = zip_options,
+                index       = zip_options.index(sel) if sel in zip_options else 0,
+                format_func = lambda z: "— Select ZIP —" if z is None else z,
+                placeholder = "Type to search…",
+            )
+            if zip_select and zip_select != sel:
+                st.session_state.selected_zip   = zip_select
+                st.session_state.last_event_key = None
+                st.rerun()
+            elif zip_select is None and sel is not None:
                 st.session_state.selected_zip   = None
                 st.session_state.last_event_key = None
                 st.session_state.map_version   += 1
                 st.rerun()
+            map_fragment()
 
-            # Road map
-            st.markdown(
-                "**Road traffic volume** (ADT – Average Daily Traffic)",
-                help="ADT = avg_daily_flow aggregated from Seattle 2025–2026 traffic study data. "
-                     "Road lines are coloured by measured traffic volume. "
-                     "Gray lines have no traffic measurement data."
-            )
-            road_fig = cached_road_fig(sel, streets_gdf, zcta_gdf, ev_df)
-            st.plotly_chart(road_fig, use_container_width=True,
-                            config={"scrollZoom": True})
+        with right_col:
+            if sel:
+                scored_row = scored[scored["ZIP"] == sel]
+                ev_in_zip  = ev_df[ev_df["ZIP"] == sel]
+                city_val   = scored_row["city"].iloc[0] if not scored_row.empty else "—"
+                pop_val    = int(scored_row["population"].iloc[0]) if not scored_row.empty else None
+                demand_val = scored_row["demand_gap"].iloc[0] if not scored_row.empty else None
 
-            # Stats
-            st.markdown("**Population & Charging**")
-            c1, c2 = st.columns(2)
-            c1.metric("Population",    f"{pop_val:,}" if pop_val else "N/A")
-            c2.metric("Stations",      len(ev_in_zip))
-            c3, c4 = st.columns(2)
-            c3.metric("Level2 Spots",  int(ev_in_zip["EV Level2 EVSE Num"].sum()),
-                      help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
-            c4.metric("DC Fast Spots", int(ev_in_zip["EV DC Fast Count"].sum()),
-                      help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
+                hdr_col, btn_col = st.columns([5, 1])
+                hdr_col.markdown(f"### {city_val} · ZIP {sel}")
+                if btn_col.button("✕ Clear", use_container_width=True):
+                    st.session_state.selected_zip   = None
+                    st.session_state.last_event_key = None
+                    st.session_state.map_version   += 1
+                    st.rerun()
 
-            c5, c6 = st.columns(2)
-            if not scored_row.empty:
-                c5.metric("Avg Daily Flow",
-                          f"{scored_row['mean_ADT'].iloc[0]:,.0f}",
-                          help="Average of avg_daily_flow across all traffic study points in this ZIP.")
-            if pd.notna(income_val):
-                c6.metric("Median Household Income",
-                          f"${int(income_val):,}",
-                          help="Median household income estimate for this ZIP code.")
-
-            if pd.notna(ev_reg_val):
-                st.metric("EV Registrations",
-                          f"{int(ev_reg_val):,}",
-                          help="Total EV vehicle registrations in this ZIP code.")
-
-            # Station table
-            st.markdown(f"**Stations in ZIP {sel}**")
-            if not ev_in_zip.empty:
-                disp = {
-                    "Station Name":      "Station",
-                    "EV Level2 EVSE Num":"Level2",
-                    "EV DC Fast Count":  "DC Fast",
-                    "EV Network":        "Network",
-                }
-                st.dataframe(
-                    ev_in_zip[list(disp)].rename(columns=disp)
-                        .sort_values("Level2", ascending=False)
-                        .reset_index(drop=True),
-                    use_container_width=True,
-                    height=200,
+                # Road map
+                st.markdown(
+                    "**Road traffic volume** (ADT – Average Daily Traffic)",
+                    help="ADT = avg_daily_flow aggregated from Seattle 2025–2026 traffic study data. "
+                         "Road lines are coloured by measured traffic volume. "
+                         "Gray lines have no traffic measurement data."
                 )
+                road_fig = cached_road_fig(sel, streets_gdf, zcta_gdf, ev_df)
+                st.plotly_chart(road_fig, use_container_width=True,
+                                config={"scrollZoom": True})
+
+                # Stats — 3 cols × 2 rows
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Population",    f"{pop_val:,}" if pop_val else "N/A")
+                c2.metric("Stations",      len(ev_in_zip))
+                c3.metric("Level2 Spots",  int(ev_in_zip["EV Level2 EVSE Num"].sum()),
+                          help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
+
+                c4, c5, c6 = st.columns(3)
+                c4.metric("DC Fast Spots", int(ev_in_zip["EV DC Fast Count"].sum()),
+                          help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
+                if not scored_row.empty:
+                    c5.metric("Avg Daily Flow",
+                              f"{scored_row['mean_ADT'].iloc[0]:,.0f}",
+                              help="Average of avg_daily_flow across all roads measured in this ZIP.")
+
+                # Station table
+                st.markdown(f"**Stations in ZIP {sel}**")
+                if not ev_in_zip.empty:
+                    disp = {
+                        "Station Name":      "Station",
+                        "EV Level2 EVSE Num":"Level2",
+                        "EV DC Fast Count":  "DC Fast",
+                        "EV Network":        "Network",
+                    }
+                    st.dataframe(
+                        ev_in_zip[list(disp)].rename(columns=disp)
+                            .sort_values("Level2", ascending=False)
+                            .reset_index(drop=True),
+                        use_container_width=True,
+                        height=200,
+                    )
+                else:
+                    st.info("No stations in this ZIP.")
+
             else:
-                st.info("No stations in this ZIP.")
+                st.markdown("### Click a ZIP to explore")
+                st.markdown("Select any ZIP code on the map to see road traffic, population, and charging station details.")
+                st.divider()
+                seattle_ev = ev_df[ev_df["ZIP"].isin(valid_zips)]
+                st.markdown("**City-wide summary**")
+                r1c1, r1c2 = st.columns(2)
+                r1c1.metric("ZIPs with data",     len(valid_zips))
+                r1c2.metric("Total EV Stations",   len(seattle_ev))
+                r2c1, r2c2 = st.columns(2)
+                r2c1.metric("Total Level2 Spots",  int(seattle_ev["EV Level2 EVSE Num"].sum()),
+                            help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
+                r2c2.metric("Total DC Fast Spots", int(seattle_ev["EV DC Fast Count"].sum()),
+                            help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
 
-        else:
-            st.markdown("### Click a ZIP to explore")
-            st.markdown("Select any ZIP code on the map to see road traffic, population, and charging station details.")
+        st.caption("Data sources: Traffic flow and demographics from Seattle 2025–2026 traffic study. "
+                   "Road network from Seattle Open Data (Street Network Database). "
+                   "EV station data from AFDC (Alternative Fuels Data Center).")
+
+    # ── Tab 2: Evaluation ─────────────────────────────────────────────────────
+    with tab2:
+        st.markdown("### Evaluate EV Charging Station Placement")
+        st.info(
+            "Rate the quality of existing EV station placements based on traffic, population, and demand.",
+            icon="⭐",
+        )
+
+        eval_left, eval_right = st.columns([1, 1], gap="medium")
+
+        with eval_left:
+            st.markdown("**Scoring Weights**")
+            w_traffic = st.slider("Traffic (Avg Daily Flow)", 0, 10, 5)
+            w_pop     = st.slider("Population",               0, 10, 5)
+            w_demand  = st.slider("Demand Gap",               0, 10, 5)
             st.divider()
-            seattle_ev = ev_df[ev_df["ZIP"].isin(valid_zips)]
-            st.markdown("**City-wide summary**")
-            r1c1, r1c2 = st.columns(2)
-            r1c1.metric("ZIPs with data",     len(valid_zips))
-            r1c2.metric("Total EV Stations",   len(seattle_ev))
-            r2c1, r2c2 = st.columns(2)
-            r2c1.metric("Total Level2 Spots",  int(seattle_ev["EV Level2 EVSE Num"].sum()),
-                        help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
-            r2c2.metric("Total DC Fast Spots", int(seattle_ev["EV DC Fast Count"].sum()),
-                        help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
+            st.markdown("*Map coming soon — will show stations colored by score*")
+            st.map(ev_df[["Latitude", "Longitude"]].rename(columns={"Latitude": "lat", "Longitude": "lon"}))
 
-    st.caption("Data sources: Traffic flow and demographics from Seattle 2025–2026 traffic study. "
-               "Road network from Seattle Open Data (Street Network Database). "
-               "EV station data from AFDC (Alternative Fuels Data Center).")
+        with eval_right:
+            st.markdown("**Station Scores by ZIP**")
+            # Placeholder scoring table
+            eval_df = scored[["ZIP", "city", "mean_ADT", "population", "demand_gap", "station_count"]].copy()
+            total_w = w_traffic + w_pop + w_demand or 1
+            adt_norm  = (eval_df["mean_ADT"]    - eval_df["mean_ADT"].min())    / (eval_df["mean_ADT"].max()    - eval_df["mean_ADT"].min() + 1e-9)
+            pop_norm  = (eval_df["population"]  - eval_df["population"].min())  / (eval_df["population"].max()  - eval_df["population"].min() + 1e-9)
+            dem_norm  = (eval_df["demand_gap"]  - eval_df["demand_gap"].min())  / (eval_df["demand_gap"].max()  - eval_df["demand_gap"].min() + 1e-9)
+            eval_df["Score"] = ((w_traffic * adt_norm + w_pop * pop_norm + w_demand * dem_norm) / total_w * 100).round(1)
+            eval_df = eval_df.rename(columns={"ZIP": "ZIP", "city": "City", "mean_ADT": "Avg Daily Flow", "population": "Population", "station_count": "Stations"})
+            eval_df = eval_df[["ZIP", "City", "Avg Daily Flow", "Population", "Stations", "Score"]].sort_values("Score", ascending=False).reset_index(drop=True)
+            st.dataframe(eval_df, use_container_width=True, height=500)
 
 
 if __name__ == "__main__":
