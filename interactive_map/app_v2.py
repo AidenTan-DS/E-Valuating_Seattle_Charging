@@ -13,6 +13,8 @@ import geopandas as gpd
 import plotly.graph_objects as go
 import streamlit as st
 
+
+
 # ── file paths ────────────────────────────────────────────────────────────────
 EV_PATH      = "data/cleaned/ev_station.csv"
 TRAFFIC_PATH = "data/cleaned/all_variables.csv"
@@ -28,6 +30,7 @@ ADT_LABELS = ["< 500", "500 – 3.8K", "3.8K – 6.7K", "6.7K – 12K", "> 12K"]
 ADT_COLORS = ["#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554"]
 ADT_WIDTHS = [2.0, 3.0, 4.0, 5.0, 6.5]
 
+st.set_page_config(page_title="Seattle EV Explorer", page_icon="⚡", layout="wide")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data functions
@@ -101,13 +104,20 @@ def aggregate_traffic_from_csv() -> pd.DataFrame:
         .rename(columns={"zip_code": "ZIP"})
     )
 
-
 def load_zcta(path: str = ZCTA_PATH) -> gpd.GeoDataFrame:
     gdf = gpd.read_file(path)
+    if gdf is None or gdf.empty:
+        st.error(f"Error: The ZCTA file at {path} is empty or could not be read.")
+        return gpd.GeoDataFrame()
+    
     zip_col = "ZCTA5CE10" if "ZCTA5CE10" in gdf.columns else "GEOID10"
     gdf["ZIP_zcta"] = gdf[zip_col].astype(str).str.zfill(5)
-    return gdf[["ZIP_zcta", "geometry"]].set_crs("EPSG:4326", allow_override=True)
 
+    # Calculate area in sq miles
+    # Project to WA North for accurate area calculation
+    gdf_projected = gdf.to_crs(epsg = 2285)
+    gdf["area_sq_mi"] = gdf_projected["geometry"].area / 27878400
+    return gdf[["ZIP_zcta", "geometry", "area_sq_mi"]].set_crs("EPSG:4326", allow_override=True)
 
 def build_master(ev_df, traffic_df) -> pd.DataFrame:
     master = traffic_df.merge(ev_df, on="ZIP", how="left")
@@ -146,11 +156,18 @@ def load_demand_gap() -> pd.DataFrame:
 @st.cache_data(show_spinner="Loading data…")
 def load_all():
     zcta_gdf  = load_zcta()
+    if zcta_gdf is None or zcta_gdf.empty:
+        st.error("Critical Error: ZCTA data is missing. Check your file paths.")
+        st.stop() 
     ev_raw    = load_ev_stations()
     ev_df     = fix_missing_zips(ev_raw, zcta_gdf)
     ev_by_zip = aggregate_ev_by_zip(ev_df)
     t_by_zip  = aggregate_traffic_from_csv()
     scored    = build_master(ev_by_zip, t_by_zip)
+    scored = scored.merge(zcta_gdf[["ZIP_zcta", "area_sq_mi"]], 
+                          left_on="ZIP", right_on="ZIP_zcta", how="left")
+    scored["pop_density"] = scored["population"] / scored["area_sq_mi"].replace(0, np.nan)
+    
     demand_df = load_demand_gap()
     scored    = scored.merge(demand_df, on="ZIP", how="left")
     return zcta_gdf, ev_df, scored
@@ -234,6 +251,19 @@ def zip_centroid(_zcta_gdf, zip_code):
     c = row.iloc[0]["geometry"].centroid
     return {"lat": c.y, "lon": c.x}
 
+@st.cache_data(show_spinner=False)
+def get_eval_map_base(_zcta_gdf, zip_tuple):
+    """Generates static background of the evaluation map."""
+    fig = go.Figure()
+    fig.add_trace(go.Choroplethmapbox(
+        geojson = build_geojson(_zcta_gdf, set(zip_tuple)),
+        locations = list(zip_tuple),
+        z = [0] * len(zip_tuple),
+        colorscale = [[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+        marker_line_color = "#ccc", marker_line_width = 0.5,
+        showscale = False, hoverinfo = "skip"
+    ))
+    return fig
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -248,10 +278,20 @@ def _line_coords(geom):
 
 
 def _midpoint(geom):
+    "Calculate midpoint values"
     coords = list(geom.coords)
     mid = coords[len(coords) // 2]
     return mid[0], mid[1]
 
+
+def get_score_color(score):
+    # Return color based on score thresholds
+    if score <= 20:
+        return "#ef4444"  # Red
+    elif score <= 40:
+        return "#facc15"  # Yellow
+    else:
+        return "#22c55e"  # Green
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main map: ZIP choropleth + EV station dots
@@ -640,25 +680,68 @@ def main():
         with eval_left:
             st.markdown("**Scoring Weights**")
             w_traffic = st.slider("Traffic (Avg Daily Flow)", 0, 10, 5)
-            w_pop     = st.slider("Population",               0, 10, 5)
+            # w_pop     = st.slider("Population",               0, 10, 5)
+            w_dens    = st.slider("Population Density",       0, 10, 5)
             w_demand  = st.slider("Demand Gap",               0, 10, 5)
             st.divider()
-            st.markdown("*Map coming soon — will show stations colored by score*")
-            st.map(ev_df[["Latitude", "Longitude"]].rename(columns={"Latitude": "lat", "Longitude": "lon"}))
+        t_w = w_traffic + w_dens + w_demand or 1
+        adt_n = (scored["mean_ADT"] - scored["mean_ADT"].min()) / (scored["mean_ADT"].max() - scored["mean_ADT"].min() + 1e-9)
+        dens_n = (scored["pop_density"] - scored["pop_density"].min()) / (scored["pop_density"].max() - scored["pop_density"].min() + 1e-9)
+        dem_n = (scored["demand_gap"] - scored["demand_gap"].min()) / (scored["demand_gap"].max() - scored["demand_gap"].min() + 1e-9)
+            # temp_scored["Zip_Score"] = ((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100)
+        # zip_scores((((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100)))
 
+        # Calculate scores & create lookup for stations
+        calc_scores = ((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100).round(1)
+        score_lookup = dict(zip(scored["ZIP"], calc_scores))
+
+        with eval_left:
+            # 2. Map scores to stations based on ZIP
+            station_scores =  ev_df["ZIP"].map(score_lookup).fillna(0)
+            station_colors = [get_score_color(s) for s in station_scores]
+            # Build map using cached background
+            base_fig = get_eval_map_base(zcta_gdf, tuple(sorted(valid_zips)))
+            eval_fig = go.Figure(base_fig)  
+
+            eval_fig.add_trace(go.Scattermapbox(
+                lat = ev_df["Latitude"],
+                lon = ev_df["Longitude"],
+                mode = "markers",
+                marker = dict(size=8, color=station_colors, opacity=0.8),
+                text = ev_df["Station Name"],
+                customdata = station_scores,
+                hovertemplate = "<b>%{text}</b><br>ZIP Score: %{customdata}<extra></extra>"
+            ))
+            
+            eval_fig.update_layout(
+                mapbox_style = "carto-positron",
+                mapbox_zoom = 10,
+                mapbox_center = {"lat": 47.61, "lon": -122.33},
+                margin = dict(l=0, r=0, t=0, b=0), height=500,
+                uirevision = "eval_map"
+            )
+            st.plotly_chart(eval_fig, use_container_width=True)
+            # Simple Legend
+            st.caption("Red: 0-20 (Low Quality/High Demand) | Yellow: 21-40 | Green: 41+ (High Quality/Balanced)")
+
+        # Altered
         with eval_right:
             st.markdown("**Station Scores by ZIP**")
             # Placeholder scoring table
-            eval_df = scored[["ZIP", "city", "mean_ADT", "population", "demand_gap", "station_count"]].copy()
-            total_w = w_traffic + w_pop + w_demand or 1
-            adt_norm  = (eval_df["mean_ADT"]    - eval_df["mean_ADT"].min())    / (eval_df["mean_ADT"].max()    - eval_df["mean_ADT"].min() + 1e-9)
-            pop_norm  = (eval_df["population"]  - eval_df["population"].min())  / (eval_df["population"].max()  - eval_df["population"].min() + 1e-9)
-            dem_norm  = (eval_df["demand_gap"]  - eval_df["demand_gap"].min())  / (eval_df["demand_gap"].max()  - eval_df["demand_gap"].min() + 1e-9)
-            eval_df["Score"] = ((w_traffic * adt_norm + w_pop * pop_norm + w_demand * dem_norm) / total_w * 100).round(1)
-            eval_df = eval_df.rename(columns={"ZIP": "ZIP", "city": "City", "mean_ADT": "Avg Daily Flow", "population": "Population", "station_count": "Stations"})
-            eval_df = eval_df[["ZIP", "City", "Avg Daily Flow", "Population", "Stations", "Score"]].sort_values("Score", ascending=False).reset_index(drop=True)
-            st.dataframe(eval_df, use_container_width=True, height=500)
-
-
+            eval_df = scored[["ZIP", "city", "mean_ADT", "population", "pop_density", "demand_gap", "station_count"]].copy()
+            # total_w = w_traffic + w_pop + w_demand or 1
+            eval_df["Score"] = eval_df["ZIP"].map(score_lookup)
+            eval_df = eval_df.rename(columns={
+            "city": "City", 
+            "mean_ADT": "Avg Daily Flow", 
+            "population":"Population",
+            "pop_density": "Density (sq/mi)", 
+            "station_count": "Stations"
+            })
+            cols = ["ZIP", "City", "Avg Daily Flow", "Population", "Density (sq/mi)", "Stations", "Score"]
+            st.dataframe(
+                eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True), 
+                use_container_width=True, height=560
+            )
 if __name__ == "__main__":
     main()
