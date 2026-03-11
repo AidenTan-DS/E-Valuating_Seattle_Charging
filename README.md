@@ -1,9 +1,10 @@
 # E-Valuating Seattle Charging: Watt’s best? 
 
-![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/Code%20Quality%20%26%20Security/badge.svg)
+![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/ci.yml/badge.svg)
+![Pylint](https://img.shields.io/badge/pylint-8.0%2B-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)
+
 
 
 An interactive Streamlit application for exploring EV charging station placement in Seattle.
