@@ -1,5 +1,13 @@
 # E-Valuating Seattle Charging: Watt’s best? 
 
+![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/Code%20Quality%20%26%20Security/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+
+An interactive Streamlit application for exploring EV charging station placement in Seattle.
+
 ## Project Group Members:
 1. Jason Cao
 2. Aiden Tan
