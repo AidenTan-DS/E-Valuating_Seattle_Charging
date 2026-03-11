@@ -1,6 +1,13 @@
-pandas
-numpy
-geopandas
-streamlit
-plotly
-pylint==3.3.3
+# Core dependencies 
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+geopandas>=0.14.0
+plotly>=5.17.0
+
+# Additional geospatial dependencies
+shapely>=2.0.0
+pyproj>=3.6.0
+
+# For reading various file formats
+openpyxl>=3.1.0
