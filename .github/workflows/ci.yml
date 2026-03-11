@@ -36,21 +36,7 @@ jobs:
       
       - name: 2. Linting (Pylint)
         run: |
-        pylint interactive_map/app_v2.py --fail-under=8.0 --output-format=text | tee pylint.txt
-        score=$(sed -n 's/^Your code has been rated at \([-0-9.]*\)\/.*/\1/p' pylint.txt)
-        echo "PYLINT_SCORE=$score" >> $GITHUB_ENV 
-      
-      - name: Create Pylint Badge
-        uses: schneegans/dynamic-badges-action@v1.7.0
-        with:
-          auth: ${{ secrets.GIST_SECRET }}
-          gistID: YOUR_GIST_ID
-          filename: pylint-badge.json
-          label: Pylint
-          message: ${{ env.PYLINT_SCORE }}
-          valColorRange: ${{ env.PYLINT_SCORE }}
-          maxColorRange: 10
-          minColorRange: 0
+          pylint interactive_map/app_v2.py --fail-under=8.0
       
       - name: 3. Run Tests (Pytest)
         run: |
