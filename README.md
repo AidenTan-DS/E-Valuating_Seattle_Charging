@@ -6,7 +6,6 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 
-
 An interactive Streamlit application for exploring EV charging station placement in Seattle.
 
 ## Project Group Members:
@@ -56,3 +55,5 @@ WA Vehicle Registration Transactions
 Traffic Flow Counts
 - https://data.seattle.gov/Transportation/Traffic-Counts-by-Study/xucb-vzhc/about_data
 
+## Running our app
+If a user would like to run the streamlit application on their local device, they must install the required packages. Instructions are in docs/environment_setip.md. There are example walkthhroughs on examples/walkthrough_example.md that will tell you more about the applications and its features.
