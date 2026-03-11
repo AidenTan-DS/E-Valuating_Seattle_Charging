@@ -31,7 +31,7 @@ Here, the map on the left is an interactive choropleth map showing all Seattle Z
 
 To investigate the traffic flow of a specific ZIP code:
 
-1. **Right‑click** on the ZIP code boundary in the map on the left.
+1. **Right‑click** on the ZIP code boundary in the map on the left or enter Zip Code on drop down menu.
 2. A **close‑up detailed map** of that ZIP code will populate on the right.
 
 This detailed view lets you see:
@@ -49,14 +49,15 @@ In this tab:
 
 - You’ll see two **input weight sliders** with values from **0 to 10**.
 - These sliders allow you to assign your own **desired importance (weights)** to:
-  - **Traffic demand gap**  
+  - **Traffic**
+  - **demand gap**  
   - **Population density**  
   for each ZIP code.
 
 As you adjust the sliders:
 
 - Each EV charging station on the map is **evaluated** based on your selected weights.
-- The **evaluation score** for each station combines the traffic demand gap and population density according to the weights you set.
+- The **evaluation score** for each station combines the traffic demand gap and population density according to the weights you set and is showcased in the statistics table to the right.
 - The **color of the EV station markers** on the map **updates dynamically** to reflect their evaluation score — stations with higher scores will be visually distinguished from those with lower scores.
 
 This interactive weighting system gives developers and planners flexibility to explore different prioritization scenarios, customizing how demand and population influence station evaluation in real time.
