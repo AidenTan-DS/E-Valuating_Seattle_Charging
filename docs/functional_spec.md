@@ -57,12 +57,12 @@ Phil just designed a new high end super speed charger and works for ChargePoint.
 
 ### 1. EV Population and Charger placements in Seattle
 
-![image](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/Interaction_Diagram.drawio.png)
+![image](diagram_images/Interaction_Diagram.drawio.png)
 
 ### 2. Evaluate quality of placement for current EV charging stations
 
-![image](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/case_2.png)
+![image](diagram_images/case_2.png)
 
 ### 3. Prediction of Future Charging placement
 
-![image](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/case_3.drawio.png)
+![image](diagram_images/case_3.drawio.png)
