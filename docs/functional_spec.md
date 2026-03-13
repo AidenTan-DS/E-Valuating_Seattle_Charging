@@ -53,3 +53,16 @@ Phil just designed a new high end super speed charger and works for ChargePoint.
     * [if valid seattle zipcode] Show an overlay on map of current EV charging stations (for both quality evaluation and EV population tabs) to compare them.
     * [If invalid Seattle zipcode] Display “Invalid Zipcode”
 
+## Use Case Diagrams
+
+### 1. EV Population and Charger placements in Seattle
+
+![Alt text](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/Interaction_Diagram.drawio.png)
+
+### 2. Evaluate quality of placement for current EV charging stations
+
+![Alt text](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/case_2.png)
+
+### 3. Prediction of Future Charging placement
+
+![Alt text](/Users/katevu/Desktop/E-Valuating_Seattle_Charging/docs/diagram_images/case_3.drawio.png)
