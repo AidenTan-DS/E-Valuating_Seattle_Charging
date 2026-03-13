@@ -30,8 +30,6 @@ ADT_LABELS = ["< 500", "500 – 3.8K", "3.8K – 6.7K", "6.7K – 12K", "> 12K"]
 ADT_COLORS = ["#93c5fd", "#3b82f6", "#1d4ed8", "#1e3a8a", "#172554"]
 ADT_WIDTHS = [2.0, 3.0, 4.0, 5.0, 6.5]
 
-st.set_page_config(page_title="Seattle EV Explorer", page_icon="⚡", layout="wide")
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Data functions
 # ─────────────────────────────────────────────────────────────────────────────
@@ -724,7 +722,6 @@ def main():
             # Simple Legend
             st.caption("Red: 0-20 (Low Quality/High Demand) | Yellow: 21-40 | Green: 41+ (High Quality/Balanced)")
 
-        # Altered
         with eval_right:
             st.markdown("**Station Scores by ZIP**")
             # Placeholder scoring table
