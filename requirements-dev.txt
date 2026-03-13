@@ -1,0 +1,6 @@
+pylint
+black
+pytest
+pytest-cov
+bandit
+safety

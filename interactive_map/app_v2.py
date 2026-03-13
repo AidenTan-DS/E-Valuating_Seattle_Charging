@@ -357,7 +357,7 @@ def _line_coords(geom):
 
 
 def _midpoint(geom):
-    "Calculate midpoint values"
+    """Return (lon, lat) of the middle vertex of a LineString geometry."""
     coords = list(geom.coords)
     mid = coords[len(coords) // 2]
     return mid[0], mid[1]
@@ -450,7 +450,7 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
 # ─────────────────────────────────────────────────────────────────────────────
 # Detail map: real road lines coloured by avg_daily_flow
 # ─────────────────────────────────────────────────────────────────────────────
-def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
+def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=too-many-locals  # map-building requires many intermediate GeoDataFrame/trace variables
     """
     Draw Seattle road line segments for the selected ZIP, coloured by
     avg_daily_flow ADT bins.  Background roads (no data) shown in light gray.
@@ -591,7 +591,8 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
 # Map fragment
 # ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
-def map_fragment():
+def map_fragment():  # pylint: disable=too-many-nested-blocks  # click-event handling requires nested if/for inside st.fragment
+    """Streamlit fragment that renders the interactive overview map and handles ZIP click events."""
     zcta_gdf, ev_df, scored = load_all()
     valid_zips  = set(scored["ZIP"])
     overview_gj = cached_geojson(zcta_gdf, tuple(sorted(valid_zips)))
@@ -631,7 +632,8 @@ def map_fragment():
 # ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit page layout requires many local variables and render calls in one function
+    """Entry point: initialise session state, render page title, and build the two-tab layout."""
     zcta_gdf, ev_df, scored = load_all()
     streets_gdf = load_streets_with_adt()
     valid_zips  = set(scored["ZIP"])
@@ -677,7 +679,7 @@ def main():
             elif zip_select is None and sel is not None:
                 st.session_state.selected_zip   = None
                 st.session_state.last_event_key = None
-                st.session_state.map_version   += 1
+                st.session_state["map_version"] += 1
                 st.rerun()
             map_fragment()
 
@@ -694,7 +696,7 @@ def main():
                 if btn_col.button("✕ Clear", use_container_width=True):
                     st.session_state.selected_zip   = None
                     st.session_state.last_event_key = None
-                    st.session_state.map_version   += 1
+                    st.session_state["map_version"] += 1
                     st.rerun()
 
                 # Road map
