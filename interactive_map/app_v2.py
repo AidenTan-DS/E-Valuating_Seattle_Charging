@@ -13,8 +13,6 @@ import geopandas as gpd
 import plotly.graph_objects as go
 import streamlit as st
 
-
-
 # ── file paths ────────────────────────────────────────────────────────────────
 EV_PATH      = "data/cleaned/ev_station.csv"
 TRAFFIC_PATH = "data/cleaned/all_variables.csv"
@@ -35,6 +33,15 @@ ADT_WIDTHS = [2.0, 3.0, 4.0, 5.0, 6.5]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_ev_stations() -> pd.DataFrame:
+    """
+    Load and filter EV charging station data for Washington state.
+    
+    Reads a CSV file containing EV charging station information, filters for
+    Washington state locations, and performs data cleaning operations.
+    
+    Returns:
+        pd.DataFrame: A cleaned dataframe containing WA state EV stations
+    """
     cols = [
         "Station Name", "Latitude", "Longitude", "ZIP", "State",
         "EV Level2 EVSE Num", "EV DC Fast Count", "EV Network",
@@ -48,6 +55,16 @@ def load_ev_stations() -> pd.DataFrame:
 
 
 def fix_missing_zips(ev_df: pd.DataFrame, zcta_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
+    """
+    Correct invalid ZIP codes by spatially matching EV station coordinates to ZCTA boundaries.
+    
+    Args:
+        ev_df: EV stations DataFrame with 'ZIP', 'Latitude', 'Longitude' columns
+        zcta_gdf: GeoDataFrame of ZIP Code Tabulation Areas with 'ZIP_zcta' column
+    
+    Returns:
+        pd.DataFrame: Copy of ev_df with corrected ZIP codes where possible
+    """
     valid_zips   = set(zcta_gdf["ZIP_zcta"])
     missing_mask = ~ev_df["ZIP"].isin(valid_zips)
     if not missing_mask.any():
@@ -68,6 +85,12 @@ def fix_missing_zips(ev_df: pd.DataFrame, zcta_gdf: gpd.GeoDataFrame) -> pd.Data
 
 
 def aggregate_ev_by_zip(ev_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate EV charging stations by ZIP code.
+    
+    Returns:
+        pd.DataFrame: Counts of stations, Level 2 ports, and DC fast chargers per ZIP
+    """
     return (
         ev_df.groupby("ZIP")
         .agg(
@@ -78,8 +101,17 @@ def aggregate_ev_by_zip(ev_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
-
 def aggregate_traffic_from_csv() -> pd.DataFrame:
+    """
+    Load and aggregate traffic data by ZIP code.
+    
+    Reads traffic flow data from CSV, cleans numeric columns, and aggregates
+    by ZIP code, computing mean average daily traffic (ADT) and taking first
+    values for demographic fields.
+    
+    Returns:
+        pd.DataFrame: Aggregated data
+    """
     df = pd.read_csv(TRAFFIC_PATH)
     df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
     # Clean income column (may contain "-" or "**")
@@ -103,11 +135,22 @@ def aggregate_traffic_from_csv() -> pd.DataFrame:
     )
 
 def load_zcta(path: str = ZCTA_PATH) -> gpd.GeoDataFrame:
+    """
+    Load ZIP Code Tabulation Area (ZCTA) boundaries and calculate areas.
+    
+    Reads ZCTA shapefile, standardizes ZIP codes, and computes area in square miles
+    using Washington State North projection (EPSG:2285) for accuracy.
+    
+    Args:
+        path: Path to ZCTA shapefile (default: ZCTA_PATH)
+    
+    Returns:
+        gpd.GeoDataFrame: ZCTA data 
+    """
     gdf = gpd.read_file(path)
     if gdf is None or gdf.empty:
         st.error(f"Error: The ZCTA file at {path} is empty or could not be read.")
         return gpd.GeoDataFrame()
-    
     zip_col = "ZCTA5CE10" if "ZCTA5CE10" in gdf.columns else "GEOID10"
     gdf["ZIP_zcta"] = gdf[zip_col].astype(str).str.zfill(5)
 
@@ -118,6 +161,19 @@ def load_zcta(path: str = ZCTA_PATH) -> gpd.GeoDataFrame:
     return gdf[["ZIP_zcta", "geometry", "area_sq_mi"]].set_crs("EPSG:4326", allow_override=True)
 
 def build_master(ev_df, traffic_df) -> pd.DataFrame:
+    """
+    Merge traffic and EV station data by ZIP code.
+    
+    Left joins traffic data with EV station aggregates, filling missing
+    station counts with zeros for ZIPs without charging stations.
+    
+    Args:
+        ev_df: EV station data aggregated by ZIP
+        traffic_df: Traffic and demographic data by ZIP
+    
+    Returns:
+        pd.DataFrame: Combined dataset with traffic metrics and EV station counts
+    """
     master = traffic_df.merge(ev_df, on="ZIP", how="left")
     master["station_count"] = master["station_count"].fillna(0)
     master["level2_spots"]  = master["level2_spots"].fillna(0)
@@ -126,6 +182,16 @@ def build_master(ev_df, traffic_df) -> pd.DataFrame:
 
 
 def build_geojson(zcta_gdf: gpd.GeoDataFrame, zip_set: set) -> dict:
+    """
+    Convert ZCTA geometries to GeoJSON for a subset of ZIP codes.
+    
+    Args:
+        zcta_gdf: GeoDataFrame of ZCTA boundaries
+        zip_set: Set of ZIP codes to include
+    
+    Returns:
+        dict: GeoJSON FeatureCollection with ZIP boundaries
+    """
     subset = zcta_gdf[zcta_gdf["ZIP_zcta"].isin(zip_set)]
     return {
         "type": "FeatureCollection",
@@ -140,12 +206,17 @@ def build_geojson(zcta_gdf: gpd.GeoDataFrame, zip_set: set) -> dict:
         ],
     }
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Cached loaders
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_demand_gap() -> pd.DataFrame:
+    """
+    Load EV charging demand gap data by ZIP code.
+    
+    Returns:
+        pd.DataFrame: ZIP codes with demand_gap values
+    """
     df = pd.read_csv(DEMAND_PATH)
     df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
     return df[["zip_code", "demand_gap"]].rename(columns={"zip_code": "ZIP"})
@@ -153,21 +224,27 @@ def load_demand_gap() -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading data…")
 def load_all():
+    """
+    Load and merge all datasets: ZCTA boundaries, EV stations, traffic, and demand gap.
+    
+    Returns:
+        tuple: (zcta_gdf, ev_df, scored) where scored is the master dataset with
+               traffic, demographics, EV stations, population density, and demand gap
+    """
     zcta_gdf  = load_zcta()
     if zcta_gdf is None or zcta_gdf.empty:
         st.error("Critical Error: ZCTA data is missing. Check your file paths.")
-        st.stop() 
-    ev_raw    = load_ev_stations()
-    ev_df     = fix_missing_zips(ev_raw, zcta_gdf)
+        st.stop()
+    ev_raw = load_ev_stations()
+    ev_df = fix_missing_zips(ev_raw, zcta_gdf)
     ev_by_zip = aggregate_ev_by_zip(ev_df)
-    t_by_zip  = aggregate_traffic_from_csv()
-    scored    = build_master(ev_by_zip, t_by_zip)
-    scored = scored.merge(zcta_gdf[["ZIP_zcta", "area_sq_mi"]], 
+    t_by_zip = aggregate_traffic_from_csv()
+    scored = build_master(ev_by_zip, t_by_zip)
+    scored = scored.merge(zcta_gdf[["ZIP_zcta", "area_sq_mi"]],
                           left_on="ZIP", right_on="ZIP_zcta", how="left")
     scored["pop_density"] = scored["population"] / scored["area_sq_mi"].replace(0, np.nan)
-    
     demand_df = load_demand_gap()
-    scored    = scored.merge(demand_df, on="ZIP", how="left")
+    scored = scored.merge(demand_df, on="ZIP", how="left")
     return zcta_gdf, ev_df, scored
 
 
@@ -217,16 +294,19 @@ def load_streets_with_adt() -> gpd.GeoDataFrame:
 
 @st.cache_data(show_spinner=False)
 def cached_geojson(_zcta_gdf, zip_tuple):
+    """Build GeoJSON for a set of ZIP codes with caching."""
     return build_geojson(_zcta_gdf, set(zip_tuple))
 
 
 @st.cache_data(show_spinner=False)
 def cached_road_fig(zip_code, _streets_gdf, _zcta_gdf, _ev_df):
+    """Build road map figure for a ZIP code with caching."""
     return build_road_map(zip_code, _streets_gdf, _zcta_gdf, _ev_df)
 
 
 @st.cache_data(show_spinner=False)
 def single_zip_geojson(_zcta_gdf, zip_code):
+    """Return GeoJSON for a single ZIP code boundary."""
     row = _zcta_gdf[_zcta_gdf["ZIP_zcta"] == zip_code]
     if row.empty:
         return None
@@ -243,6 +323,7 @@ def single_zip_geojson(_zcta_gdf, zip_code):
 
 @st.cache_data(show_spinner=False)
 def zip_centroid(_zcta_gdf, zip_code):
+    """Get the centroid coordinates for a ZIP code."""
     row = _zcta_gdf[_zcta_gdf["ZIP_zcta"] == zip_code]
     if row.empty:
         return {"lat": 47.61, "lon": -122.33}
@@ -283,18 +364,23 @@ def _midpoint(geom):
 
 
 def get_score_color(score):
-    # Return color based on score thresholds
+    """Returns color based on score thresholds"""
     if score <= 20:
         return "#ef4444"  # Red
-    elif score <= 40:
+    if score <= 40:
         return "#facc15"  # Yellow
-    else:
-        return "#22c55e"  # Green
+    return "#22c55e"  # Green
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main map: ZIP choropleth + EV station dots
 # ─────────────────────────────────────────────────────────────────────────────
 def build_main_map(ev_df, scored, geojson, selected_zip):
+    """
+    Builds the main choropleth map showing traffic flow by ZIP and EV stations.
+    
+    Returns:
+        go.Figure: Plotly mapbox figure with traffic choropleth and station markers
+    """
     zip_list = scored["ZIP"].tolist()
     sel_idx  = zip_list.index(selected_zip) if selected_zip in zip_list else None
 
@@ -308,9 +394,16 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
         marker_opacity = 0.55,
         marker_line_width  = 1.0,
         marker_line_color  = "#888",
-        colorbar = dict(title=dict(text="Avg Daily<br>Flow", font=dict(size=11)),
-                        thickness=12, len=0.45, x=1.01),
-        hovertemplate  = "<b>ZIP %{location}</b><br>Avg daily flow: %{z:,.0f}<br><i>Click to explore</i><extra></extra>",
+        colorbar={
+            "title": {"text": "Avg Daily<br>Flow", "font": {"size": 11}},
+            "thickness": 12,
+            "len": 0.45,
+            "x": 1.01
+        },
+        hovertemplate = (
+                        "<b>ZIP %{location}</b><br>"
+                        "Avg daily flow: %{z:,.0f}<br>"
+                        "<i>Click to explore</i><extra></extra>"),
         name           = "Traffic per ZIP",
         showlegend     = False,
         selectedpoints = [sel_idx] if sel_idx is not None else None,
@@ -321,9 +414,10 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
         lat  = seattle_ev["Latitude"],
         lon  = seattle_ev["Longitude"],
         mode = "markers",
-        marker = dict(size=6, color="#22c55e", opacity=0.75),
+        marker = {"size": 6, "color": '#22c55e', "opacity": 0.75},
         text       = seattle_ev["Station Name"],
-        customdata = seattle_ev[["ZIP", "EV Level2 EVSE Num", "EV DC Fast Count", "EV Network"]].values,
+        customdata = seattle_ev[["ZIP", "EV Level2 EVSE Num",
+                                 "EV DC Fast Count", "EV Network"]].values,
         hovertemplate = (
             "<b>%{text}</b><br>"
             "<br>"
@@ -335,19 +429,19 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
         ),
         name       = "EV Station",
         showlegend = True,
-        hoverlabel = dict(bgcolor="white", bordercolor="#22c55e", font=dict(size=13)),
+        hoverlabel = {"bgcolor": 'white', "bordercolor": '#22c55e', "font": {"size": 13}}
     ))
 
     fig.update_layout(
         mapbox_style  = "carto-positron",
         mapbox_zoom   = 10.5,
         mapbox_center = {"lat": 47.61, "lon": -122.33},
-        margin        = dict(l=0, r=0, t=0, b=0),
+        margin        = {"l": 0, "r": 0, "t": 0, "b": 0},
         height        = 460,
         showlegend    = True,
-        legend        = dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.90)",
-                             bordercolor="#22c55e", borderwidth=1.5,
-                             font=dict(size=13)),
+        legend        = {"x":0.01, "y":0.99, "bgcolor":'rgba(255,255,255,0.90)',
+                             "bordercolor":"#22c55e", "borderwidth":1.5,
+                             "font": {"size": 13}},
         uirevision    = "main",
     )
     return fig
@@ -384,7 +478,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
 
     if zip_poly.empty:
         fig.update_layout(mapbox_style="carto-positron", mapbox_zoom=13,
-                          mapbox_center=center, margin=dict(l=0, r=0, t=0, b=0), height=400)
+                          mapbox_center=center, margin={"l": 0, "r": 0, "t": 0, "b": 0}, height=400)
         return fig
 
     # Filter street segments that belong to this ZIP (either side)
@@ -394,7 +488,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
     if zip_streets.empty:
         st.caption("No road data for this ZIP.")
         fig.update_layout(mapbox_style="carto-positron", mapbox_zoom=13,
-                          mapbox_center=center, margin=dict(l=0, r=0, t=0, b=0), height=400)
+                          mapbox_center=center, margin={"l": 0, "r": 0, "t": 0, "b": 0}, height=400)
         return fig
 
     # Pick ADT: prefer the side that matches the selected ZIP
@@ -428,7 +522,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
 
         fig.add_trace(go.Scattermapbox(
             lat=lats_line, lon=lons_line, mode="lines",
-            line=dict(width=ADT_WIDTHS[i], color=ADT_COLORS[i]),
+            line={"width": ADT_WIDTHS[i], "color": ADT_COLORS[i]},
             name=f"ADT {ADT_LABELS[i]}",
             hoverinfo="skip", showlegend=True,
             legendgroup=f"adt_{i}",
@@ -444,10 +538,10 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
         ]
         fig.add_trace(go.Scattermapbox(
             lat=mid_lats, lon=mid_lons, mode="markers",
-            marker=dict(size=16, color=ADT_COLORS[i], opacity=0),
+            marker={"size":16, "color":ADT_COLORS[i], "opacity":0},
             text=hover_texts,
             hovertemplate="%{text}<extra></extra>",
-            hoverlabel=dict(namelength=-1, font=dict(size=12), bgcolor="white"),
+            hoverlabel={"namelength": -1, "font": {"size": 12}, "bgcolor": 'white'},
             name=f"ADT {ADT_LABELS[i]}", showlegend=False,
             legendgroup=f"adt_{i}",
         ))
@@ -459,7 +553,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
             lat  = ev_zip["Latitude"],
             lon  = ev_zip["Longitude"],
             mode = "markers",
-            marker = dict(size=11, color="#22c55e", opacity=0.9),
+            marker = {"bgcolor": 'white', "bordercolor": '#22c55e', "font": {"size": 13}},
             text       = ev_zip["Station Name"],
             customdata = ev_zip[["EV Level2 EVSE Num", "EV DC Fast Count", "EV Network"]].values,
             hovertemplate = (
@@ -471,25 +565,25 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
                 "<extra></extra>"
             ),
             name = "EV Station",
-            hoverlabel = dict(bgcolor="white", bordercolor="#22c55e", font=dict(size=13)),
+            hoverlabel = {"bgcolor": 'white', "bordercolor": '#22c55e', "font": dict(size=13)},
         ))
 
     fig.update_layout(
         mapbox_style  = "carto-positron",
         mapbox_zoom   = 13.0,
         mapbox_center = center,
-        margin        = dict(l=0, r=0, t=0, b=0),
+        margin        = {"l": 0, "r": 0, "t": 0, "b": 0},
         height        = 400,
-        legend        = dict(
-            title            = dict(text="ADT (vehicles/day)", font=dict(size=11)),
-            x=0.01, y=0.99,
-            bgcolor          = "rgba(255,255,255,0.88)",
-            bordercolor      = "#ddd", borderwidth=1,
-            font             = dict(size=11),
-            itemclick        = False,
-            itemdoubleclick  = False,
-        ),
-    )
+        legend        = {
+            "title": {'text': 'ADT (vehicles/day)', 'font': {'size': 11}}, 
+            "x": 0.01, "y": 0.99,
+            "bgcolor" :"rgba(255,255,255,0.88)",
+            "bordercolor": "#ddd", 
+            "borderwidth": 1,
+            "font": {"size": 11},
+            "itemclick": False,
+            "itemdoubleclick": False,}
+        )
     return fig
 
 
@@ -557,12 +651,14 @@ def main():
     with tab1:
         st.info(
             "**How to use this map**  \n"
-            "- The left map shows **average daily traffic flow** by ZIP code — darker orange = higher traffic.  \n"
-            "- Green dots are **EV charging stations**. Hover over a dot to see station details.  \n"
-            "- **Click any ZIP area or station** to load the road network map and charging stats on the right.",
+            "- The left map shows **average daily traffic flow** by ZIP code — "
+            "darker orange = higher traffic.  \n"
+            "- Green dots are **EV charging stations**. Hover over a dot to see "
+            "station details.  \n"
+            "- **Click any ZIP area or station** to load the road network map and "
+            "charging stats on the right.",
             icon="ℹ️",
         )
-
         left_col, right_col = st.columns([1, 1], gap="medium")
 
         with left_col:
@@ -591,7 +687,7 @@ def main():
                 ev_in_zip  = ev_df[ev_df["ZIP"] == sel]
                 city_val   = scored_row["city"].iloc[0] if not scored_row.empty else "—"
                 pop_val    = int(scored_row["population"].iloc[0]) if not scored_row.empty else None
-                demand_val = scored_row["demand_gap"].iloc[0] if not scored_row.empty else None
+                #demand_val = scored_row["demand_gap"].iloc[0] if not scored_row.empty else None
 
                 hdr_col, btn_col = st.columns([5, 1])
                 hdr_col.markdown(f"### {city_val} · ZIP {sel}")
@@ -604,9 +700,11 @@ def main():
                 # Road map
                 st.markdown(
                     "**Road traffic volume** (ADT – Average Daily Traffic)",
-                    help="ADT = avg_daily_flow aggregated from Seattle 2025–2026 traffic study data. "
-                         "Road lines are coloured by measured traffic volume. "
-                         "Gray lines have no traffic measurement data."
+                    help=(
+                        "ADT = avg_daily_flow aggregated from Seattle 2025–2026 traffic "
+                         "study data. Road lines are coloured by measured traffic volume. "
+                        "Gray lines have no traffic measurement data."
+                    )
                 )
                 road_fig = cached_road_fig(sel, streets_gdf, zcta_gdf, ev_df)
                 st.plotly_chart(road_fig, use_container_width=True,
@@ -619,14 +717,18 @@ def main():
                 c3.metric("Level2 Spots",  int(ev_in_zip["EV Level2 EVSE Num"].sum()),
                           help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
 
-                c4, c5, c6 = st.columns(3)
+                c4, c5, _ = st.columns(3)
                 c4.metric("DC Fast Spots", int(ev_in_zip["EV DC Fast Count"].sum()),
                           help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
                 if not scored_row.empty:
-                    c5.metric("Avg Daily Flow",
-                              f"{scored_row['mean_ADT'].iloc[0]:,.0f}",
-                              help="Average of avg_daily_flow across all roads measured in this ZIP.")
-
+                    c5.metric(
+                        "Avg Daily Flow",
+                        f"{scored_row['mean_ADT'].iloc[0]:,.0f}",
+                        help=(
+                            "Average of avg_daily_flow across all roads "
+                            "measured in this ZIP."
+                        )
+                    )
                 # Station table
                 st.markdown(f"**Stations in ZIP {sel}**")
                 if not ev_in_zip.empty:
@@ -648,7 +750,10 @@ def main():
 
             else:
                 st.markdown("### Click a ZIP to explore")
-                st.markdown("Select any ZIP code on the map to see road traffic, population, and charging station details.")
+                st.markdown(
+                    "Select any ZIP code on the map to see road traffic, population, "
+                    "and charging station details."
+                    )
                 st.divider()
                 seattle_ev = ev_df[ev_df["ZIP"].isin(valid_zips)]
                 st.markdown("**City-wide summary**")
@@ -659,9 +764,13 @@ def main():
                 r2c1.metric("Total Level2 Spots",  int(seattle_ev["EV Level2 EVSE Num"].sum()),
                             help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
                 r2c2.metric("Total DC Fast Spots", int(seattle_ev["EV DC Fast Count"].sum()),
-                            help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
-
-        st.caption("Data sources: Traffic flow and demographics from Seattle 2025–2026 traffic study. "
+                            help= (
+                            "DC Fast Charging ports (50–350+ kW). "
+                            "Charge to ~80% in 20–45 min."
+                            )
+                )
+        st.caption("Data sources: Traffic flow and demographics "
+                   " from Seattle 2025–2026 traffic study. "
                    "Road network from Seattle Open Data (Street Network Database). "
                    "EV station data from AFDC (Alternative Fuels Data Center).")
 
@@ -669,7 +778,8 @@ def main():
     with tab2:
         st.markdown("### Evaluate EV Charging Station Placement")
         st.info(
-            "Rate the quality of existing EV station placements based on traffic, population, and demand.",
+            "Rate the quality of existing EV station placements based on traffic, "
+            "population, and demand.",
             icon="⭐",
         )
 
@@ -683,14 +793,26 @@ def main():
             w_demand  = st.slider("Demand Gap",               0, 10, 5)
             st.divider()
         t_w = w_traffic + w_dens + w_demand or 1
-        adt_n = (scored["mean_ADT"] - scored["mean_ADT"].min()) / (scored["mean_ADT"].max() - scored["mean_ADT"].min() + 1e-9)
-        dens_n = (scored["pop_density"] - scored["pop_density"].min()) / (scored["pop_density"].max() - scored["pop_density"].min() + 1e-9)
-        dem_n = (scored["demand_gap"] - scored["demand_gap"].min()) / (scored["demand_gap"].max() - scored["demand_gap"].min() + 1e-9)
-            # temp_scored["Zip_Score"] = ((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100)
+        adt_n = (
+            (scored["mean_ADT"] - scored["mean_ADT"].min())
+            / (scored["mean_ADT"].max() - scored["mean_ADT"].min() + 1e-9)
+        )
+        dens_n = (
+            (scored["pop_density"] - scored["pop_density"].min())
+            / (scored["pop_density"].max() - scored["pop_density"].min() + 1e-9)
+        )
+        dem_n = (
+            (scored["demand_gap"] - scored["demand_gap"].min())
+            / (scored["demand_gap"].max() - scored["demand_gap"].min() + 1e-9)
+        )
+        # temp_scored["Zip_Score"]=
+            # (w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n)/t_w * 100
         # zip_scores((((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100)))
 
         # Calculate scores & create lookup for stations
-        calc_scores = ((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100).round(1)
+        calc_scores = (
+            ((w_traffic * adt_n + w_dens * dens_n + w_demand * dem_n) / t_w * 100).round(1)
+        )
         score_lookup = dict(zip(scored["ZIP"], calc_scores))
 
         with eval_left:
@@ -699,33 +821,34 @@ def main():
             station_colors = [get_score_color(s) for s in station_scores]
             # Build map using cached background
             base_fig = get_eval_map_base(zcta_gdf, tuple(sorted(valid_zips)))
-            eval_fig = go.Figure(base_fig)  
+            eval_fig = go.Figure(base_fig)
 
             eval_fig.add_trace(go.Scattermapbox(
                 lat = ev_df["Latitude"],
                 lon = ev_df["Longitude"],
                 mode = "markers",
-                marker = dict(size=8, color=station_colors, opacity=0.8),
+                marker = {"size": 8, "color": station_colors, "opacity": 0.8},
                 text = ev_df["Station Name"],
                 customdata = station_scores,
                 hovertemplate = "<b>%{text}</b><br>ZIP Score: %{customdata}<extra></extra>"
             ))
-            
             eval_fig.update_layout(
                 mapbox_style = "carto-positron",
                 mapbox_zoom = 10,
                 mapbox_center = {"lat": 47.61, "lon": -122.33},
-                margin = dict(l=0, r=0, t=0, b=0), height=500,
+                margin = {"l": 0, "r": 0, "t": 0, "b": 0}, height=500,
                 uirevision = "eval_map"
             )
             st.plotly_chart(eval_fig, use_container_width=True)
             # Simple Legend
-            st.caption("Red: 0-20 (Low Quality/High Demand) | Yellow: 21-40 | Green: 41+ (High Quality/Balanced)")
+            st.caption("Red: 0-20 (Low Quality/High Demand) |"
+                       " Yellow: 21-40 | Green: 41+ (High Quality/Balanced)")
 
         with eval_right:
             st.markdown("**Station Scores by ZIP**")
             # Placeholder scoring table
-            eval_df = scored[["ZIP", "city", "mean_ADT", "population", "pop_density", "demand_gap", "station_count"]].copy()
+            eval_df = scored[["ZIP", "city", "mean_ADT", "population",
+                              "pop_density", "demand_gap", "station_count"]].copy()
             # total_w = w_traffic + w_pop + w_demand or 1
             eval_df["Score"] = eval_df["ZIP"].map(score_lookup)
             eval_df = eval_df.rename(columns={
@@ -735,9 +858,10 @@ def main():
             "pop_density": "Density (sq/mi)", 
             "station_count": "Stations"
             })
-            cols = ["ZIP", "City", "Avg Daily Flow", "Population", "Density (sq/mi)", "Stations", "Score"]
+            cols = ["ZIP", "City", "Avg Daily Flow",
+                    "Population", "Density (sq/mi)", "Stations", "Score"]
             st.dataframe(
-                eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True), 
+                eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True),
                 use_container_width=True, height=560
             )
 if __name__ == "__main__":
