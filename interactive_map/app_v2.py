@@ -35,6 +35,7 @@ ADT_WIDTHS = [2.0, 3.0, 4.0, 5.0, 6.5]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_ev_stations() -> pd.DataFrame:
+    """Load and clean EV charging station records from CSV, keeping only Washington state rows."""
     cols = [
         "Station Name", "Latitude", "Longitude", "ZIP", "State",
         "EV Level2 EVSE Num", "EV DC Fast Count", "EV Network",
@@ -48,6 +49,7 @@ def load_ev_stations() -> pd.DataFrame:
 
 
 def fix_missing_zips(ev_df: pd.DataFrame, zcta_gdf: gpd.GeoDataFrame) -> pd.DataFrame:
+    """Spatial-join stations whose ZIP is absent from ZCTA boundaries to the correct ZIP polygon."""
     valid_zips   = set(zcta_gdf["ZIP_zcta"])
     missing_mask = ~ev_df["ZIP"].isin(valid_zips)
     if not missing_mask.any():
@@ -68,6 +70,7 @@ def fix_missing_zips(ev_df: pd.DataFrame, zcta_gdf: gpd.GeoDataFrame) -> pd.Data
 
 
 def aggregate_ev_by_zip(ev_df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate EV station records by ZIP, returning station count, Level2 spots, and DC Fast count."""
     return (
         ev_df.groupby("ZIP")
         .agg(
@@ -80,6 +83,7 @@ def aggregate_ev_by_zip(ev_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_traffic_from_csv() -> pd.DataFrame:
+    """Read traffic/demographics CSV and aggregate mean ADT, population, and city by ZIP code."""
     df = pd.read_csv(TRAFFIC_PATH)
     df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
     # Clean income column (may contain "-" or "**")
@@ -103,6 +107,7 @@ def aggregate_traffic_from_csv() -> pd.DataFrame:
     )
 
 def load_zcta(path: str = ZCTA_PATH) -> gpd.GeoDataFrame:
+    """Load ZIP Code Tabulation Area boundaries from GeoJSON and compute area in square miles."""
     gdf = gpd.read_file(path)
     if gdf is None or gdf.empty:
         st.error(f"Error: The ZCTA file at {path} is empty or could not be read.")
@@ -118,6 +123,7 @@ def load_zcta(path: str = ZCTA_PATH) -> gpd.GeoDataFrame:
     return gdf[["ZIP_zcta", "geometry", "area_sq_mi"]].set_crs("EPSG:4326", allow_override=True)
 
 def build_master(ev_df, traffic_df) -> pd.DataFrame:
+    """Left-join traffic DataFrame with EV aggregates on ZIP, filling missing counts with zero."""
     master = traffic_df.merge(ev_df, on="ZIP", how="left")
     master["station_count"] = master["station_count"].fillna(0)
     master["level2_spots"]  = master["level2_spots"].fillna(0)
@@ -126,6 +132,7 @@ def build_master(ev_df, traffic_df) -> pd.DataFrame:
 
 
 def build_geojson(zcta_gdf: gpd.GeoDataFrame, zip_set: set) -> dict:
+    """Return a GeoJSON FeatureCollection containing only the ZIP polygons in zip_set."""
     subset = zcta_gdf[zcta_gdf["ZIP_zcta"].isin(zip_set)]
     return {
         "type": "FeatureCollection",
@@ -146,6 +153,7 @@ def build_geojson(zcta_gdf: gpd.GeoDataFrame, zip_set: set) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_demand_gap() -> pd.DataFrame:
+    """Load the pre-computed demand-gap CSV and return a two-column DataFrame (ZIP, demand_gap)."""
     df = pd.read_csv(DEMAND_PATH)
     df["zip_code"] = df["zip_code"].astype(str).str.zfill(5)
     return df[["zip_code", "demand_gap"]].rename(columns={"zip_code": "ZIP"})
@@ -153,6 +161,7 @@ def load_demand_gap() -> pd.DataFrame:
 
 @st.cache_data(show_spinner="Loading data…")
 def load_all():
+    """Load and assemble all datasets: ZCTA boundaries, EV stations, traffic, and demand gap."""
     zcta_gdf  = load_zcta()
     if zcta_gdf is None or zcta_gdf.empty:
         st.error("Critical Error: ZCTA data is missing. Check your file paths.")
@@ -217,16 +226,19 @@ def load_streets_with_adt() -> gpd.GeoDataFrame:
 
 @st.cache_data(show_spinner=False)
 def cached_geojson(_zcta_gdf, zip_tuple):
+    """Cached wrapper around build_geojson; zip_tuple is used as the cache key."""
     return build_geojson(_zcta_gdf, set(zip_tuple))
 
 
 @st.cache_data(show_spinner=False)
 def cached_road_fig(zip_code, _streets_gdf, _zcta_gdf, _ev_df):
+    """Cached wrapper around build_road_map; zip_code is the primary cache key."""
     return build_road_map(zip_code, _streets_gdf, _zcta_gdf, _ev_df)
 
 
 @st.cache_data(show_spinner=False)
 def single_zip_geojson(_zcta_gdf, zip_code):
+    """Return a single-feature GeoJSON dict for zip_code, or None if the ZIP is not found."""
     row = _zcta_gdf[_zcta_gdf["ZIP_zcta"] == zip_code]
     if row.empty:
         return None
@@ -243,6 +255,7 @@ def single_zip_geojson(_zcta_gdf, zip_code):
 
 @st.cache_data(show_spinner=False)
 def zip_centroid(_zcta_gdf, zip_code):
+    """Return {"lat": ..., "lon": ...} centroid for zip_code, defaulting to Seattle centre if missing."""
     row = _zcta_gdf[_zcta_gdf["ZIP_zcta"] == zip_code]
     if row.empty:
         return {"lat": 47.61, "lon": -122.33}
@@ -276,14 +289,14 @@ def _line_coords(geom):
 
 
 def _midpoint(geom):
-    "Calculate midpoint values"
+    """Return (lon, lat) of the middle vertex of a LineString geometry."""
     coords = list(geom.coords)
     mid = coords[len(coords) // 2]
     return mid[0], mid[1]
 
 
 def get_score_color(score):
-    # Return color based on score thresholds
+    """Return a hex color string based on placement score: red (≤20), yellow (≤40), or green (>40)."""
     if score <= 20:
         return "#ef4444"  # Red
     elif score <= 40:
@@ -295,6 +308,7 @@ def get_score_color(score):
 # Main map: ZIP choropleth + EV station dots
 # ─────────────────────────────────────────────────────────────────────────────
 def build_main_map(ev_df, scored, geojson, selected_zip):
+    """Build the overview Plotly map: ZIP choropleth coloured by mean ADT with EV station dots."""
     zip_list = scored["ZIP"].tolist()
     sel_idx  = zip_list.index(selected_zip) if selected_zip in zip_list else None
 
@@ -356,7 +370,7 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
 # ─────────────────────────────────────────────────────────────────────────────
 # Detail map: real road lines coloured by avg_daily_flow
 # ─────────────────────────────────────────────────────────────────────────────
-def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
+def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=too-many-locals
     """
     Draw Seattle road line segments for the selected ZIP, coloured by
     avg_daily_flow ADT bins.  Background roads (no data) shown in light gray.
@@ -497,7 +511,8 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):
 # Map fragment
 # ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
-def map_fragment():
+def map_fragment():  # pylint: disable=too-many-nested-blocks
+    """Streamlit fragment that renders the interactive overview map and handles ZIP click events."""
     zcta_gdf, ev_df, scored = load_all()
     valid_zips  = set(scored["ZIP"])
     overview_gj = cached_geojson(zcta_gdf, tuple(sorted(valid_zips)))
@@ -537,7 +552,8 @@ def map_fragment():
 # ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-statements
+    """Entry point: initialise session state, render page title, and build the two-tab layout."""
     zcta_gdf, ev_df, scored = load_all()
     streets_gdf = load_streets_with_adt()
     valid_zips  = set(scored["ZIP"])
@@ -581,7 +597,7 @@ def main():
             elif zip_select is None and sel is not None:
                 st.session_state.selected_zip   = None
                 st.session_state.last_event_key = None
-                st.session_state.map_version   += 1
+                st.session_state["map_version"] += 1
                 st.rerun()
             map_fragment()
 
@@ -591,14 +607,12 @@ def main():
                 ev_in_zip  = ev_df[ev_df["ZIP"] == sel]
                 city_val   = scored_row["city"].iloc[0] if not scored_row.empty else "—"
                 pop_val    = int(scored_row["population"].iloc[0]) if not scored_row.empty else None
-                demand_val = scored_row["demand_gap"].iloc[0] if not scored_row.empty else None
-
                 hdr_col, btn_col = st.columns([5, 1])
                 hdr_col.markdown(f"### {city_val} · ZIP {sel}")
                 if btn_col.button("✕ Clear", use_container_width=True):
                     st.session_state.selected_zip   = None
                     st.session_state.last_event_key = None
-                    st.session_state.map_version   += 1
+                    st.session_state["map_version"] += 1
                     st.rerun()
 
                 # Road map
@@ -619,7 +633,7 @@ def main():
                 c3.metric("Level2 Spots",  int(ev_in_zip["EV Level2 EVSE Num"].sum()),
                           help="Level 2 AC charging ports (240V). Typical charge time: 4–12 hrs.")
 
-                c4, c5, c6 = st.columns(3)
+                c4, c5, _ = st.columns(3)
                 c4.metric("DC Fast Spots", int(ev_in_zip["EV DC Fast Count"].sum()),
                           help="DC Fast Charging ports (50–350+ kW). Charge to ~80% in 20–45 min.")
                 if not scored_row.empty:
