@@ -370,7 +370,7 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
 # ─────────────────────────────────────────────────────────────────────────────
 # Detail map: real road lines coloured by avg_daily_flow
 # ─────────────────────────────────────────────────────────────────────────────
-def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=too-many-locals
+def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=too-many-locals  # map-building requires many intermediate GeoDataFrame/trace variables
     """
     Draw Seattle road line segments for the selected ZIP, coloured by
     avg_daily_flow ADT bins.  Background roads (no data) shown in light gray.
@@ -511,7 +511,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=t
 # Map fragment
 # ─────────────────────────────────────────────────────────────────────────────
 @st.fragment
-def map_fragment():  # pylint: disable=too-many-nested-blocks
+def map_fragment():  # pylint: disable=too-many-nested-blocks  # click-event handling requires nested if/for inside st.fragment
     """Streamlit fragment that renders the interactive overview map and handles ZIP click events."""
     zcta_gdf, ev_df, scored = load_all()
     valid_zips  = set(scored["ZIP"])
@@ -552,7 +552,7 @@ def map_fragment():  # pylint: disable=too-many-nested-blocks
 # ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
-def main():  # pylint: disable=too-many-locals,too-many-statements
+def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit page layout requires many local variables and render calls in one function
     """Entry point: initialise session state, render page title, and build the two-tab layout."""
     zcta_gdf, ev_df, scored = load_all()
     streets_gdf = load_streets_with_adt()
