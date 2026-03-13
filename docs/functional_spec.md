@@ -1,18 +1,24 @@
 ## Data Sources
-EV Charging Station Locations Alternative Fuels Data Center (AFDC) — Seattle/WA EV charging stations
+### Population Data
+Seattle population estimates
+- https://geo.wa.gov/datasets/wa-geoservices::demographics-by-zipcode/about
+
+### EV Charging Station Locations 
+Alternative Fuels Data Center (AFDC) — Seattle/WA EV charging stations
 - https://afdc.energy.gov/stations#/find/nearest?location=Washington&fuel=ELEC&country=US
+
+### Electrical Line Location Data
+Displays the line locations of eelctrical lines, above and below ground
+- https://catalog.data.gov/dataset/seattle-city-light-lines-81e85
 
 ### Washington Vehicle Registration Data
 WA Vehicle Registration Transactions
 - https://data.wa.gov/Transportation/Vehicle-Registration-Transactions-by-Department-of/brw6-jymh/about_data
 
 ### Traffic Data (Seattle)
-2022 Traffic Flow Counts
-- https://data-seattlecitygis.opendata.arcgis.com/datasets/2022-traffic-flow-counts/about
+Traffic Flow Counts
+- https://data.seattle.gov/Transportation/Traffic-Counts-by-Study/xucb-vzhc/about_data
 
-### Crime Data
-SPD Crime Data: 2008–Present — City of Seattle Open Data Portal
-- https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data
 
 ## User Stories
 
@@ -36,11 +42,10 @@ Phil just designed a new high end super speed charger and works for ChargePoint.
 
 ### 2.Evaluate quality of placement for current EV charging stations
 - User: Access the “Evaluation” tab
-- System: Display “Input Zipcode” and filters for different evaluation criteria (e.g. traffic, population, wages)
-- User: Input Zipcode and filters 
+- System: Display filters for different evaluation criteria (e.g. traffic, population, demand)
+- User: Input filters 
 - System: 
-    * [if valid seattle zipcode] Populate data specific to the zipcode. Including the rating of a specific station, along with the factors used to calculate it - nearby traffic, nearby population, wages of nearby population (zipcode/city), criminal activity, existing EV infrastructure. 
-    * [If invalid Seattle zipcode] Display “Invalid Zipcode”
+    *  Populate data specific to the filters. Including the rating of a specific station, along with the factors used to calculate it - nearby traffic, nearby population existing EV infrastructure. 
 - User: Click on a station 
 - System: Display pop-up/page showing details about the measures used to evaluate it
 

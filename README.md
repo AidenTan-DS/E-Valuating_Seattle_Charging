@@ -1,9 +1,9 @@
 # E-Valuating Seattle Charging: Watt’s best? 
 
 ![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/Code%20Quality%20%26%20Security/badge.svg)
+[![codecov](https://codecov.io/gh/YOUR_USERNAME/YOUR_REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/kkatevu/-Valuating_Seattle_Charging)
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-
 
 
 An interactive Streamlit application for exploring EV charging station placement in Seattle.
@@ -15,7 +15,8 @@ An interactive Streamlit application for exploring EV charging station placement
 4. Katelyn Vu
 
 ## Project Type
-### Data Presentation
+
+### Data Presentation/Tool
 
 ## Questions of interest
 1. Which areas in Seattle could use EV charging stations?
@@ -26,8 +27,7 @@ An interactive Streamlit application for exploring EV charging station placement
 ## Project Goal & Output
 We will produce an interactive dashboard that allows users to:
 - Explore current and recommended EV charging station locations in Seattle
-- Visualize demand based on traffic, crime, and demographic variables
-- Input custom criteria to refine recommendations
+- Visualize demand based on traffic and demographic variables
 
 Final deliverables include:
 - A data-driven dashboard with user inputs & filters
@@ -35,17 +35,25 @@ Final deliverables include:
 - Interpretation & recommendations for potential charging station placements
 
 ## Data 
-EV Charging Station Locations Alternative Fuels Data Center (AFDC) — Seattle/WA EV charging stations
+### Population Data
+Seattle population estimates
+- https://geo.wa.gov/datasets/wa-geoservices::demographics-by-zipcode/about
+
+### EV Charging Station Locations 
+Alternative Fuels Data Center (AFDC) — Seattle/WA EV charging stations
 - https://afdc.energy.gov/stations#/find/nearest?location=Washington&fuel=ELEC&country=US
+
+### Electrical Line Location Data
+Displays the line locations of eelctrical lines, above and below ground
+- https://catalog.data.gov/dataset/seattle-city-light-lines-81e85
 
 ### Washington Vehicle Registration Data
 WA Vehicle Registration Transactions
 - https://data.wa.gov/Transportation/Vehicle-Registration-Transactions-by-Department-of/brw6-jymh/about_data
 
 ### Traffic Data (Seattle)
-2022 Traffic Flow Counts
-- https://data-seattlecitygis.opendata.arcgis.com/datasets/2022-traffic-flow-counts/about
+Traffic Flow Counts
+- https://data.seattle.gov/Transportation/Traffic-Counts-by-Study/xucb-vzhc/about_data
 
-### Crime Data
-SPD Crime Data: 2008–Present — City of Seattle Open Data Portal
-- https://data.seattle.gov/Public-Safety/SPD-Crime-Data-2008-Present/tazs-3rd5/about_data
+## Running our app
+If a user would like to run the streamlit application on their local device, they must install the required packages. Instructions are in docs/environment_setip.md. There are example walkthhroughs on examples/walkthrough_example.md that will tell you more about the applications and its features.
