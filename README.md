@@ -1,8 +1,8 @@
 # E-Valuating Seattle Charging: Watt’s best? 
 
 ![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/Code%20Quality%20%26%20Security/badge.svg)
-![codecov]([![codecov](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging/branch/main/graph/badge.svg?token=CODECOV_TOKEN)](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging))
-![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue)
+[![codecov](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging/branch/main/graph/badge.svg)](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 
