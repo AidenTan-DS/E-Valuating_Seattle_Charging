@@ -146,6 +146,8 @@ def test_single_zip_geojson_no_match_case():
 
 def test_single_zip_geojson_valid_case():
     """Checks if a proper GeoJSON dictionary is returned for a valid match."""
+    import streamlit as st
+    st.cache_data.clear()  # Prevent cache pollution from earlier tests with same zip code
     test_zip_code = "98105"
     square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
     mock_gdf = gpd.GeoDataFrame({
