@@ -41,7 +41,7 @@ jobs:
       
       - name: 3. Run Tests (Pytest)
         run: |
-          pytest tests/ -v --cov=interactive_map --cov-report=term
+          pytest tests/ -v --cov=interactive_map --cov-report=term-missing --cov-report=xml
   
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
