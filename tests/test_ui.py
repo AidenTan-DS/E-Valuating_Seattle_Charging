@@ -15,7 +15,7 @@ APP_PATH = str(ROOT / "interactive_map" / "app_v2.py")
 def test_app_loads_without_exception():
     at = AppTest.from_file(APP_PATH, default_timeout=60)
     at.run()
-    assert at.exception is None
+    assert len(at.exception) == 0  # ElementList() when no exceptions, not None
 
 
 def test_app_title():
