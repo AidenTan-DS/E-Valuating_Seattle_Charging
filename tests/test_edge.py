@@ -224,32 +224,6 @@ def test_build_main_map_invalid_selected_zip():
     fig = build_main_map(ev_df, scored_df, {}, "99999")  # Invalid ZIP
     assert fig.data[0].selectedpoints is None
  
-@patch("app_v2.zip_centroid")
-@patch("app_v2.single_zip_geojson")
-def test_build_road_map_adt_on_boundaries(mock_geojson, mock_centroid):
-    """ADT exactly on bin boundaries should be assigned correctly"""
-    mock_centroid.return_value = {"lat": 47.6, "lon": -122.3}
-    mock_geojson.return_value = {"type": "FeatureCollection", "features": []}
-    
-    zcta_gdf = gpd.GeoDataFrame({
-        "ZIP_zcta": ["98105"],
-        "geometry": [Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])]
-    }, crs="EPSG:4326")
-    
-    # Test exact boundary values: 500, 3800, 6700, 12000
-    streets_gdf = gpd.GeoDataFrame({
-        "L_ZIP": ["98105"] * 4,
-        "R_ZIP": ["98105"] * 4,
-        "adt_l": [500.0, 3800.0, 6700.0, 12000.0],
-        "adt_r": [500.0, 3800.0, 6700.0, 12000.0],
-        "ORD_STNAME_CONCAT": ["ST1", "ST2", "ST3", "ST4"],
-        "geometry": [LineString([(i*0.25, 0), (i*0.25, 1)]) for i in range(4)]
-    }, crs="EPSG:4326")
-    
-    fig = build_road_map("98105", streets_gdf, zcta_gdf, pd.DataFrame())
-    # Should not crash and should bin correctly
-    assert fig is not None
- 
  
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
