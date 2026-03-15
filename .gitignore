@@ -210,3 +210,5 @@ __marimo__/
 app_folium.py
 *.pdf
 *.ipynb
+__azurite_db*
+__azurite_db*
