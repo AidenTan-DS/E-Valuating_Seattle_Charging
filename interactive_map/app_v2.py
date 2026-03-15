@@ -1,6 +1,6 @@
 """
 app_v2.py – Seattle EV Station Explorer  (Version 2)
-Run: streamlit run app_v2.py
+run interactive_map/app_v2.py
 
 Main map  : ZIP choropleth (avg_daily_flow) + EV station dots  → click a ZIP
 Detail map: real Seattle road lines coloured by avg_daily_flow + EV station dots
@@ -13,12 +13,18 @@ import geopandas as gpd
 import plotly.graph_objects as go
 import streamlit as st
 
+from ml_model import (
+    get_recommended_stations,
+    get_electric_lines_for_map,
+    filter_recommended_by_probability,
+)
+
 # ── file paths ────────────────────────────────────────────────────────────────
 EV_PATH      = "data/cleaned/ev_station.csv"
 TRAFFIC_PATH = "data/cleaned/all_variables.csv"
 DEMAND_PATH  = "data/cleaned/demand_gap.csv"
 ZCTA_PATH    = "data/geo/zcta.json"
-STREETS_PATH = "data/geo/seattle_streets.geojson"   # WGS84, Seattle-only, pre-built
+STREETS_PATH = "data/geo/seattle_streets.geojson"  # WGS84, Seattle-only, pre-built
 
 st.set_page_config(page_title="Seattle EV Explorer", page_icon="⚡", layout="wide")
 
@@ -344,6 +350,13 @@ def get_eval_map_base(_zcta_gdf, zip_tuple):
     ))
     return fig
 
+
+@st.cache_data(show_spinner=False)
+def load_electric_lines_map():
+    """Load electric lines (OH/UG) for map. Cached for fast reload."""
+    return get_electric_lines_for_map()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -630,6 +643,174 @@ def map_fragment():  # pylint: disable=too-many-nested-blocks  # click-event han
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Prediction map builder
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _add_zip_boundaries_to_figure(fig, zcta_gdf, valid_zips):
+    """Add transparent ZIP boundary choropleth as map background."""
+    geojson = cached_geojson(zcta_gdf, tuple(sorted(valid_zips)))
+    fig.add_trace(
+        go.Choroplethmapbox(
+            geojson=geojson,
+            locations=sorted(valid_zips),
+            z=[0] * len(valid_zips),
+            colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
+            marker_line_color="#ccc",
+            marker_line_width=0.5,
+            showscale=False,
+            hoverinfo="skip",
+        )
+    )
+
+
+def _add_power_lines_to_figure(fig, show_power_lines):
+    """Add overhead (amber) and underground (slate) power line traces if toggle is on."""
+    if not show_power_lines:
+        return
+    oh_lines, ug_lines = load_electric_lines_map()
+    if oh_lines is not None and oh_lines[0] is not None:
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=oh_lines[1],
+                lon=oh_lines[0],
+                mode="lines",
+                line={"width": 0.8, "color": "#f59e0b"},
+                name="Overhead lines",
+                hoverinfo="skip",
+                showlegend=True,
+            )
+        )
+    if ug_lines is not None and ug_lines[0] is not None:
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=ug_lines[1],
+                lon=ug_lines[0],
+                mode="lines",
+                line={"width": 0.8, "color": "#64748b"},
+                name="Underground lines",
+                hoverinfo="skip",
+                showlegend=True,
+            )
+        )
+
+
+def _add_existing_stations_to_figure(fig, ev_df, valid_zips):
+    """Add green markers for existing EV stations. Returns filtered ev_df for metrics."""
+    seattle_ev = ev_df[ev_df["ZIP"].isin(valid_zips)]
+    hover_tpl = (
+        "<b>%{text}</b> (Existing)<br>"
+        "ZIP: %{customdata[0]}<br>"
+        "Level 2: %{customdata[1]:.0f} | DC Fast: %{customdata[2]:.0f}"
+        "<extra></extra>"
+    )
+    fig.add_trace(
+        go.Scattermapbox(
+            lat=seattle_ev["Latitude"],
+            lon=seattle_ev["Longitude"],
+            mode="markers",
+            marker={"size": 8, "color": "#22c55e", "opacity": 0.8},
+            text=seattle_ev["Station Name"],
+            customdata=seattle_ev[
+                ["ZIP", "EV Level2 EVSE Num", "EV DC Fast Count"]
+            ].values,
+            hovertemplate=hover_tpl,
+            name="Existing Stations",
+            showlegend=True,
+        )
+    )
+    return seattle_ev
+
+
+def _add_recommended_stations_to_figure(fig, recommended_filtered):
+    """Add red markers for recommended locations, colored by predicted probability."""
+    if recommended_filtered.empty:
+        return
+    has_prob = "predicted_prob" in recommended_filtered.columns
+    if has_prob:
+        probs = recommended_filtered["predicted_prob"].values
+        customdata = recommended_filtered[["ZIP", "predicted_prob"]].values
+        hovertemplate = (
+            "<b>%{text}</b><br>Probability: %{customdata[1]:.1%}<extra></extra>"
+        )
+    else:
+        probs = [0.5] * len(recommended_filtered)
+        customdata = recommended_filtered[["ZIP"]].values
+        hovertemplate = "<b>%{text}</b><br><extra></extra>"
+    if "Location" in recommended_filtered.columns:
+        location_labels = recommended_filtered["Location"].values
+    else:
+        location_labels = ["Recommended"] * len(recommended_filtered)
+    colorbar = {
+        "title": {"text": "Predicted<br>Probability", "font": {"size": 10}},
+        "thickness": 12,
+        "len": 0.4,
+        "x": 1.02,
+        "tickformat": ".0%",
+    }
+    fig.add_trace(
+        go.Scattermapbox(
+            lat=recommended_filtered["Latitude"],
+            lon=recommended_filtered["Longitude"],
+            mode="markers",
+            marker={
+                "size": 10,
+                "color": probs,
+                "colorscale": "Reds",
+                "cmin": 0,
+                "cmax": 1,
+                "opacity": 0.85,
+                "symbol": "circle",
+                "showscale": True,
+                "colorbar": colorbar,
+            },
+            text=location_labels,
+            customdata=customdata,
+            hovertemplate=hovertemplate,
+            name="Recommended",
+            showlegend=True,
+        )
+    )
+
+
+def _apply_prediction_map_layout(fig):
+    """Apply standard layout (map style, zoom, legend) to the prediction map."""
+    fig.update_layout(
+        mapbox_style="carto-positron",
+        mapbox_zoom=10.5,
+        mapbox_center={"lat": 47.61, "lon": -122.33},
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        height=500,
+        legend={
+            "x": 0.01,
+            "y": 0.99,
+            "bgcolor": "rgba(255,255,255,0.90)",
+            "bordercolor": "#ddd",
+            "borderwidth": 1,
+            "font": {"size": 12},
+        },
+        uirevision="pred_map",
+    )
+
+
+def build_prediction_map(
+    zcta_gdf, valid_zips, ev_df, recommended_filtered, show_power_lines
+):
+    """
+    Build the Prediction tab map.
+
+    Adds ZIP boundaries, power lines, existing and recommended stations.
+    Returns (figure, seattle_ev_df) for plotting and metrics.
+    """
+    fig = go.Figure()
+    _add_zip_boundaries_to_figure(fig, zcta_gdf, valid_zips)
+    _add_power_lines_to_figure(fig, show_power_lines)
+    seattle_ev = _add_existing_stations_to_figure(fig, ev_df, valid_zips)
+    _add_recommended_stations_to_figure(fig, recommended_filtered)
+    _apply_prediction_map_layout(fig)
+    return fig, seattle_ev
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
 def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit page layout requires many local variables and render calls in one function
@@ -647,7 +828,7 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
 
     st.title("⚡ Seattle EV Station Explorer")
 
-    tab1, tab2 = st.tabs(["📍 Location", "⭐ Evaluation"])
+    tab1, tab2, tab3 = st.tabs(["📍 Location", "⭐ Evaluation", "🔮 Prediction"])
 
     # ── Tab 1: Location ───────────────────────────────────────────────────────
     with tab1:
@@ -866,5 +1047,72 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
                 eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True),
                 use_container_width=True, height=560
             )
+
+    # ── Tab 3: Prediction ───────────────────────────────────────────────────────
+    with tab3:
+        # Load recommended locations from pre-generated CSV (fast, no geo processing)
+        recommended_stations = get_recommended_stations()
+
+        st.info(
+            "**ML-Based Station Placement Predictions**  \n"
+            "- **Amber lines** = overhead power | **Slate lines** = underground power  \n"
+            "- **Green dots** = existing EV stations  \n"
+            "- **Red dots** = recommended locations (500m grid cells where the model predicts "
+            "a station should exist but none currently does.",
+            icon="🔮",
+        )
+
+        if recommended_stations.empty:
+            st.warning(
+                "No recommended locations loaded. Run this once from project root to generate the CSV:\n\n"
+                "```bash\npython -m interactive_map.ml_model\n```\n\n"
+                "This saves `data/processed/recommended_grid_locations.csv`. "
+                "Then refresh this page."
+            )
+
+        # Controls: power lines toggle + probability filter (side by side)
+        ctrl_col1, ctrl_col2 = st.columns(2)
+        with ctrl_col1:
+            show_power_lines = st.checkbox(
+                "Show power lines",
+                value=False,
+                help="Overhead (amber) and underground (slate)",
+            )
+        with ctrl_col2:
+            prob_min = st.slider(
+                "Min probability (Recommended dots)",
+                0, 100, 60,
+                format="%d%%",
+                help="Hide recommended dots below this probability threshold",
+            ) / 100.0
+
+        # Filter recommended by probability (pure function, easy to test)
+        recommended_filtered = filter_recommended_by_probability(recommended_stations, prob_min)
+
+        pred_fig, seattle_ev = build_prediction_map(
+            zcta_gdf, valid_zips, ev_df, recommended_filtered, show_power_lines
+        )
+        st.plotly_chart(pred_fig, use_container_width=True, config={"scrollZoom": True})
+
+        # Stats
+        c1, c2 = st.columns(2)
+        c1.metric("Existing Stations", len(seattle_ev))
+        rec_count = len(recommended_filtered) if not recommended_filtered.empty else 0
+        c2.metric("Recommended Locations", rec_count)
+
+        # Download CSV
+        if not recommended_stations.empty:
+            csv = recommended_stations.to_csv(index=False)
+            st.download_button(
+                "Download recommended locations (CSV)",
+                csv,
+                file_name="recommended_grid_locations.csv",
+                mime="text/csv",
+            )
+
+        st.caption(
+            "Red dots = grid cell centroids. Generate/update the CSV with: "
+            "`python -m interactive_map.ml_model` (from project root)."
+        )
 if __name__ == "__main__":
     main()

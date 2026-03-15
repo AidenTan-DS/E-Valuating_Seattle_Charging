@@ -2,7 +2,7 @@
 ml_model.py – EV station placement prediction (matches station_prediction.ipynb).
 
 Creates a 500m grid over Seattle, trains logistic regression, and saves
-recommended locations (red dots) for the map in app_v3.
+recommended locations (red dots) for the map in app_v2.
 
 Run from project root:
   python -m interactive_map.ml_model
