@@ -862,9 +862,20 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
             })
             cols = ["ZIP", "City", "Avg Daily Flow",
                     "Population", "Density (sq/mi)", "Stations", "Score"]
+            final_df = eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True)
+
             st.dataframe(
-                eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True),
-                use_container_width=True, height=560
+                final_df,use_container_width=True, height=560
+            )
+            csv_data = final_df.to_csv(index = False).encode('utf-8')
+            dynamic_filename = f"seattle_score_t{w_traffic:.2f}_p{w_dens:.2f}_d{w_demand:.2f}.csv"
+            # Render download button: 
+            st.download_button(
+                label="📥 Download Station Scores (CSV)",
+                data=csv_data,
+                file_name=dynamic_filename,
+                mime="text/csv",
+                use_container_width=True,
             )
 if __name__ == "__main__":
     main()
