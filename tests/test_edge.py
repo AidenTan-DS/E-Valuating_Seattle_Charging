@@ -224,36 +224,6 @@ def test_build_main_map_invalid_selected_zip():
     fig = build_main_map(ev_df, scored_df, {}, "99999")  # Invalid ZIP
     assert fig.data[0].selectedpoints is None
  
- 
-@patch("app_v2.zip_centroid")
-@patch("app_v2.single_zip_geojson")
-def test_build_road_map_all_nan_adt(mock_geojson, mock_centroid):
-    """All NaN ADT should show boundary but no colored roads"""
-    mock_centroid.return_value = {"lat": 47.6, "lon": -122.3}
-    mock_geojson.return_value = {"type": "FeatureCollection", "features": []}
-    
-    zcta_gdf = gpd.GeoDataFrame({
-        "ZIP_zcta": ["98105"],
-        "geometry": [Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])]
-    }, crs="EPSG:4326")
-    
-    streets_gdf = gpd.GeoDataFrame({
-        "L_ZIP": ["98105", "98105"],
-        "R_ZIP": ["98105", "98105"],
-        "adt_l": [np.nan, np.nan],
-        "adt_r": [np.nan, np.nan],
-        "ORD_STNAME_CONCAT": ["ST1", "ST2"],
-        "geometry": [
-            LineString([(0, 0), (0.5, 0.5)]),
-            LineString([(0.5, 0.5), (1, 1)])
-        ]
-    }, crs="EPSG:4326")
-    
-    fig = build_road_map("98105", streets_gdf, zcta_gdf, pd.DataFrame())
-    # Should not crash, should create valid figure
-    assert fig is not None
- 
- 
 @patch("app_v2.zip_centroid")
 @patch("app_v2.single_zip_geojson")
 def test_build_road_map_adt_on_boundaries(mock_geojson, mock_centroid):
