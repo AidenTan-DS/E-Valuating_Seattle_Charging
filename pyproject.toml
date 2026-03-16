@@ -23,3 +23,9 @@ dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+
+[tool.coverage.run]
+omit = ["interactive_map/app_folium.py"]
+
+[tool.pytest.ini_options]
+addopts = "--cov-config=pyproject.toml"
