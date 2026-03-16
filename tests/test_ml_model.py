@@ -2,7 +2,7 @@
 Unit tests for Prediction tab logic (app_v2 Tab 3) and ml_model helpers.
 
 Includes edge tests, one-shot tests, and exception tests.
-Run from project root: pytest tests/test_prediction.py -v
+Run from project root: pytest tests/test_ml_model.py -v
 """
 
 import sys
@@ -10,8 +10,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import geopandas as gpd
 import pandas as pd
 import pytest
+from shapely.geometry import LineString, Point
 
 # Add interactive_map to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "interactive_map"))
@@ -22,8 +24,39 @@ from ml_model import (
     get_recommended_stations,
     get_electric_lines_for_map,
     get_zip_predictions,
+    generate_electric_lines_cache,
     EMPTY_RECOMMENDED,
+    _zcta_zip_series,
 )
+
+
+# ── _zcta_zip_series ────────────────────────────────────────────────────────
+
+def test_zcta_zip_series_uses_zip_zcta_when_present():
+    """When ZIP_zcta column exists, use it with zfill(5)."""
+    gdf = gpd.GeoDataFrame({"ZIP_zcta": ["123", "4567"], "geometry": [Point(0, 0), Point(1, 1)]})
+    result = _zcta_zip_series(gdf)
+    assert list(result) == ["00123", "04567"]
+
+
+def test_zcta_zip_series_uses_zcta5ce10_when_no_zip_zcta():
+    """When ZIP_zcta missing but ZCTA5CE10 exists, use ZCTA5CE10."""
+    gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98105", "98122"],
+        "geometry": [Point(0, 0), Point(1, 1)],
+    })
+    result = _zcta_zip_series(gdf)
+    assert list(result) == ["98105", "98122"]
+
+
+def test_zcta_zip_series_uses_geoid10_when_only_geoid10():
+    """When only GEOID10 exists, use it."""
+    gdf = gpd.GeoDataFrame({
+        "GEOID10": ["98101", "98102"],
+        "geometry": [Point(0, 0), Point(1, 1)],
+    })
+    result = _zcta_zip_series(gdf)
+    assert list(result) == ["98101", "98102"]
 
 
 # ── filter_recommended_by_probability ─────────────────────────────────────────
@@ -122,6 +155,34 @@ def test_filter_recommended_edge_threshold_one():
     assert result["predicted_prob"].iloc[0] == 1.0
 
 
+def test_filter_recommended_preserves_all_columns():
+    """Edge: filter keeps all input columns, does not drop any."""
+    df = pd.DataFrame({
+        "Latitude": [47.6, 47.61],
+        "Longitude": [-122.3, -122.31],
+        "predicted_prob": [0.4, 0.7],
+        "ZIP": ["Cell 0", "Cell 1"],
+        "Location": ["A", "B"],
+    })
+    result = filter_recommended_by_probability(df, 0.5)
+    assert list(result.columns) == list(df.columns)
+    assert result["Location"].iloc[0] == "B"
+
+
+def test_filter_recommended_does_not_mutate_input():
+    """Edge: filter returns a copy; input DataFrame is unchanged."""
+    df = pd.DataFrame({
+        "Latitude": [47.6],
+        "Longitude": [-122.3],
+        "predicted_prob": [0.8],
+        "ZIP": ["Cell 0"],
+    })
+    original_len = len(df)
+    result = filter_recommended_by_probability(df, 0.5)
+    assert len(df) == original_len
+    assert result is not df
+
+
 # ── load_recommended_from_csv ────────────────────────────────────────────────
 
 def test_load_recommended_missing_file():
@@ -218,6 +279,25 @@ def test_load_recommended_one_row_with_cell_id():
         Path(path).unlink(missing_ok=True)
 
 
+def test_integration_load_csv_then_filter_by_probability():
+    """One-shot: load CSV → filter by probability → correct shape and columns."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude,predicted_prob,Location,cell_id\n")
+        f.write("47.60,-122.33,0.4,Low,0\n")
+        f.write("47.61,-122.32,0.6,Mid,1\n")
+        f.write("47.62,-122.31,0.9,High,2\n")
+        path = f.name
+    try:
+        loaded = load_recommended_from_csv(path)
+        assert len(loaded) == 3
+        filtered = filter_recommended_by_probability(loaded, 0.6)
+        assert len(filtered) == 2
+        assert set(filtered["Location"]) == {"Mid", "High"}
+        assert list(filtered.columns) == list(loaded.columns)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 # ── geoms_to_plotly ──────────────────────────────────────────────────────────
 
 def test_geoms_to_plotly_empty():
@@ -273,6 +353,16 @@ def test_geoms_to_plotly_raises_on_string_instead_of_geom():
     """String instead of geometry raises AttributeError."""
     with pytest.raises(AttributeError):
         geoms_to_plotly(["not a geometry"])
+
+
+def test_geoms_to_plotly_multiple_geometries_in_list():
+    """Edge: multiple LineStrings in one list are concatenated with None separators."""
+    line1 = LineString([(0, 0), (1, 1)])
+    line2 = LineString([(2, 2), (3, 3)])
+    line3 = LineString([(4, 4), (5, 5)])
+    lons, lats = geoms_to_plotly([line1, line2, line3])
+    assert lons == [0, 1, None, 2, 3, None, 4, 5, None]
+    assert lats == [0, 1, None, 2, 3, None, 4, 5, None]
 
 
 # ── get_recommended_stations ──────────────────────────────────────────────────
@@ -344,6 +434,88 @@ def test_get_electric_lines_empty_cache_returns_none(mock_isfile, mock_read):
     assert result == (None, None)
 
 
+@patch("ml_model.geoms_to_plotly")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_get_electric_lines_missing_conductor_type_uses_all_geoms(
+    mock_isfile, mock_read, mock_geoms
+):
+    """Edge: when ConductorType1 column is missing, all geometries go to OH; UG is empty."""
+    mock_isfile.return_value = True
+    mock_read.return_value = gpd.GeoDataFrame({
+        "geometry": [LineString([(0, 0), (1, 1)])],
+    })
+    mock_geoms.side_effect = [([0, 1, None], [0, 1, None]), (None, None)]
+    oh, ug = get_electric_lines_for_map()
+    assert oh == ([0, 1, None], [0, 1, None])
+    assert ug == (None, None)
+    assert mock_geoms.call_count == 2
+
+
+# ── generate_electric_lines_cache ────────────────────────────────────────────
+
+@patch("ml_model.os.path.isfile")
+def test_generate_electric_lines_cache_skips_when_cache_exists(mock_isfile):
+    """When cache file exists, returns early without building."""
+    mock_isfile.return_value = True
+    with patch("ml_model.gpd.read_file") as mock_read:
+        generate_electric_lines_cache()
+        mock_read.assert_not_called()
+
+
+@patch("ml_model.os.makedirs")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_generate_electric_lines_cache_builds_when_missing(
+    mock_isfile, mock_read, mock_makedirs
+):
+    """One-shot: when cache missing, builds cache (mocked geo data)."""
+    from shapely.geometry import Polygon
+    mock_isfile.return_value = False
+    seattle = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    line = LineString([(0.5, 0.5), (0.6, 0.6)])
+    mock_read.side_effect = [
+        gpd.GeoDataFrame({"geometry": [seattle]}, crs="EPSG:2285"),
+        gpd.GeoDataFrame({"geometry": [line], "ConductorType1": ["OH"]}, crs="EPSG:2285"),
+    ]
+    with patch("ml_model.gpd.clip") as mock_clip:
+        mock_clip.return_value = gpd.GeoDataFrame({"geometry": [line]}, crs="EPSG:4326")
+        with patch.object(gpd.GeoDataFrame, "to_file"):
+            generate_electric_lines_cache()
+    mock_makedirs.assert_called_once()
+    assert mock_read.call_count >= 2
+
+
+@patch("ml_model.os.makedirs")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_generate_electric_lines_cache_returns_early_when_lines_empty(
+    mock_isfile, mock_read, mock_makedirs
+):
+    """Edge: when no lines intersect Seattle, returns early without writing cache."""
+    from shapely.geometry import Polygon
+    mock_isfile.return_value = False
+    seattle = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    line_far = LineString([(100, 100), (101, 101)])
+    mock_read.side_effect = [
+        gpd.GeoDataFrame({"geometry": [seattle]}, crs="EPSG:2285"),
+        gpd.GeoDataFrame({"geometry": [line_far], "ConductorType1": ["OH"]}, crs="EPSG:2285"),
+    ]
+    with patch.object(gpd.GeoDataFrame, "to_file") as mock_to_file:
+        generate_electric_lines_cache()
+        mock_to_file.assert_not_called()
+
+
+@patch("ml_model.os.makedirs")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_generate_electric_lines_cache_handles_exception(mock_isfile, mock_read, mock_makedirs):
+    """Exception: when geo processing fails, catches exception and does not raise."""
+    mock_isfile.return_value = False
+    mock_read.side_effect = OSError("Geo file not found")
+    generate_electric_lines_cache()
+
+
 # ── get_zip_predictions ──────────────────────────────────────────────────────
 
 def test_get_zip_predictions_empty_dataframe():
@@ -359,6 +531,38 @@ def test_get_zip_predictions_missing_station_count_column():
     result = get_zip_predictions(scored)
     assert result.empty
     assert list(result.columns) == ["ZIP", "predicted_prob"]
+
+
+@patch("ml_model._prepare_features")
+@patch("ml_model._get_or_train_model")
+def test_get_zip_predictions_single_class_model_returns_zeros(mock_get_model, mock_prepare):
+    """Edge: when model predicts only class 0 (prob_arr 1 col, 1 not in classes_), probs are zeros."""
+    import numpy as np
+    scored = pd.DataFrame({"ZIP": ["98105", "98122"], "station_count": [0, 0]})
+    mock_model = MagicMock()
+    mock_model.predict_proba.return_value = np.array([[0.9], [0.8]])
+    mock_model.classes_ = np.array([0])
+    mock_get_model.return_value = (mock_model, MagicMock())
+    mock_prepare.return_value = pd.DataFrame({
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+        "dist_to_major_road": [50, 100],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result = get_zip_predictions(scored)
+    assert len(result) == 2
+    assert list(result["predicted_prob"]) == [0.0, 0.0]
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_power_line_features_exception_returns_empty(mock_read):
+    """Exception: when geo files fail to load, _load_power_line_features returns empty DataFrame."""
+    import ml_model as m
+    m._feature_cache.clear()
+    mock_read.side_effect = OSError("File not found")
+    result = m._load_power_line_features_by_zip()
+    assert result.empty
+    assert list(result.columns) == ["ZIP", "total_power_line_length", "pct_underground_power"]
 
 
 @patch("ml_model._prepare_features")
