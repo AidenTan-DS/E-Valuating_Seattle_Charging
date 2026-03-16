@@ -20,6 +20,7 @@ from app_v2 import (
     ADT_BINS, ADT_LABELS, ADT_COLORS, ADT_WIDTHS,
     aggregate_ev_by_zip, build_master, build_geojson,
     single_zip_geojson, zip_centroid,
+    get_eval_map_base, build_main_map,
 )
 
 
@@ -101,6 +102,45 @@ def test_build_geojson():
 
     assert result['type'] == 'FeatureCollection'
     assert len(result['features']) == 2  # Only requested ZIPs
+
+
+def test_get_eval_map_base_structure():
+    """Eval map base returns figure with Choroplethmap trace (Plotly MapLibre)."""
+    import streamlit as st
+    st.cache_data.clear()
+    sample_gdf = gpd.GeoDataFrame({
+        'ZIP_zcta': ['98105', '98122'],
+        'geometry': [
+            Polygon([(0, 0), (1, 0), (1, 1), (0, 0)]),
+            Polygon([(1, 0), (2, 0), (2, 1), (1, 1)])
+        ]
+    }, crs="EPSG:4326")
+    zip_tuple = ('98105', '98122')
+    fig = get_eval_map_base(sample_gdf, zip_tuple)
+    assert len(fig.data) >= 1
+    assert isinstance(fig.data[0], go.Choroplethmap)
+
+
+def test_build_main_map_structure():
+    """Main map returns figure with Choroplethmap and Scattermap traces (Plotly MapLibre)."""
+    ev_df = pd.DataFrame({
+        'Station Name': ['Station A'],
+        'Latitude': [47.6],
+        'Longitude': [-122.3],
+        'ZIP': ['98101'],
+        'EV Level2 EVSE Num': [4],
+        'EV DC Fast Count': [1],
+        'EV Network': ['Test'],
+    })
+    scored = pd.DataFrame({
+        'ZIP': ['98105', '98122', '98101'],
+        'mean_ADT': [1000, 2000, 3000],
+    })
+    geojson = {'type': 'FeatureCollection', 'features': []}
+    fig = build_main_map(ev_df, scored, geojson, '98101')
+    assert len(fig.data) >= 2
+    assert isinstance(fig.data[0], go.Choroplethmap)
+    assert isinstance(fig.data[1], go.Scattermap)
 
 
 # zip_centroid
