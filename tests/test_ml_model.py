@@ -1,13 +1,14 @@
 """
 Unit tests for Prediction tab logic (app_v2 Tab 3) and ml_model helpers.
 
-Includes edge tests, one-shot tests, and exception tests.
-Run from project root: pytest tests/test_prediction.py -v
+Tests core behavior: filtering, loading CSV, geoms conversion, and predictions.
+Run from project root: pytest tests/test_ml_model.py -v
 """
 
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pandas as pd
 import pytest
@@ -18,6 +19,9 @@ from ml_model import (
     filter_recommended_by_probability,
     load_recommended_from_csv,
     geoms_to_plotly,
+    get_recommended_stations,
+    get_electric_lines_for_map,
+    get_zip_predictions,
     EMPTY_RECOMMENDED,
 )
 
@@ -79,61 +83,6 @@ def test_filter_recommended_all_below_returns_empty():
     assert result.empty
 
 
-# ── filter_recommended edge tests ─────────────────────────────────────────────
-
-def test_filter_recommended_edge_prob_min_zero():
-    """prob_min=0 keeps all rows, including prob=0."""
-    df = pd.DataFrame({
-        "Latitude": [47.6, 47.61],
-        "Longitude": [-122.3, -122.31],
-        "predicted_prob": [0.0, 0.5],
-        "ZIP": ["Cell 0", "Cell 1"],
-    })
-    result = filter_recommended_by_probability(df, 0.0)
-    assert len(result) == 2
-    assert result["predicted_prob"].tolist() == [0.0, 0.5]
-
-
-def test_filter_recommended_edge_prob_min_one():
-    """prob_min=1.0 keeps only rows with prob=1.0."""
-    df = pd.DataFrame({
-        "Latitude": [47.6, 47.61, 47.62],
-        "Longitude": [-122.3, -122.31, -122.32],
-        "predicted_prob": [0.9, 1.0, 0.99],
-        "ZIP": ["Cell 0", "Cell 1", "Cell 2"],
-    })
-    result = filter_recommended_by_probability(df, 1.0)
-    assert len(result) == 1
-    assert result["predicted_prob"].iloc[0] == 1.0
-
-
-def test_filter_recommended_edge_single_row():
-    """Single-row DataFrame filters correctly."""
-    df = pd.DataFrame({
-        "Latitude": [47.6],
-        "Longitude": [-122.3],
-        "predicted_prob": [0.7],
-        "ZIP": ["Cell 0"],
-    })
-    result = filter_recommended_by_probability(df, 0.5)
-    assert len(result) == 1
-    assert result["predicted_prob"].iloc[0] == 0.7
-
-
-def test_filter_recommended_one_shot():
-    """One-shot: single input, single expected output."""
-    df = pd.DataFrame({
-        "Latitude": [47.6],
-        "Longitude": [-122.3],
-        "predicted_prob": [0.8],
-        "ZIP": ["Cell 0"],
-    })
-    result = filter_recommended_by_probability(df, 0.5)
-    assert len(result) == 1
-    assert result["Latitude"].iloc[0] == 47.6
-    assert result["predicted_prob"].iloc[0] == 0.8
-
-
 def test_filter_recommended_handles_nan_prob_gracefully():
     """NaN in predicted_prob is excluded by the filter."""
     df = pd.DataFrame({
@@ -145,6 +94,32 @@ def test_filter_recommended_handles_nan_prob_gracefully():
     result = filter_recommended_by_probability(df, 0.5)
     assert len(result) == 1
     assert result["predicted_prob"].iloc[0] == 0.8
+
+
+def test_filter_recommended_edge_threshold_zero_keeps_all():
+    """Edge: prob_min=0 keeps all rows including prob=0."""
+    df = pd.DataFrame({
+        "Latitude": [47.6, 47.61],
+        "Longitude": [-122.3, -122.31],
+        "predicted_prob": [0.0, 0.5],
+        "ZIP": ["Cell 0", "Cell 1"],
+    })
+    result = filter_recommended_by_probability(df, 0.0)
+    assert len(result) == 2
+    assert 0.0 in result["predicted_prob"].values
+
+
+def test_filter_recommended_edge_threshold_one():
+    """Edge: prob_min=1.0 keeps only rows with prob exactly 1.0."""
+    df = pd.DataFrame({
+        "Latitude": [47.6, 47.61, 47.62],
+        "Longitude": [-122.3, -122.31, -122.32],
+        "predicted_prob": [0.9, 1.0, 0.99],
+        "ZIP": ["Cell 0", "Cell 1", "Cell 2"],
+    })
+    result = filter_recommended_by_probability(df, 1.0)
+    assert len(result) == 1
+    assert result["predicted_prob"].iloc[0] == 1.0
 
 
 # ── load_recommended_from_csv ────────────────────────────────────────────────
@@ -201,36 +176,6 @@ def test_load_recommended_empty_csv():
         Path(path).unlink(missing_ok=True)
 
 
-def test_load_recommended_edge_single_row_csv():
-    """CSV with exactly one data row loads correctly."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-        f.write("Latitude,Longitude,predicted_prob,Location,cell_id\n")
-        f.write("47.6,-122.3,0.9,Grid cell 0 (prob: 0.90),0\n")
-        path = f.name
-    try:
-        result = load_recommended_from_csv(path)
-        assert len(result) == 1
-        assert result["Latitude"].iloc[0] == 47.6
-        assert result["predicted_prob"].iloc[0] == 0.9
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_load_recommended_one_shot():
-    """One-shot: load one valid row from CSV."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-        f.write("Latitude,Longitude,predicted_prob,Location,cell_id\n")
-        f.write("47.6062,-122.3321,0.85,Sample location,42\n")
-        path = f.name
-    try:
-        result = load_recommended_from_csv(path)
-        assert len(result) == 1
-        assert result["ZIP"].iloc[0] == "Cell 42"
-        assert result["predicted_prob"].iloc[0] == 0.85
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
 def test_load_recommended_raises_on_malformed_csv():
     """Malformed CSV (invalid UTF-8) causes pd.read_csv to raise."""
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".csv", delete=False) as f:
@@ -240,6 +185,35 @@ def test_load_recommended_raises_on_malformed_csv():
     try:
         with pytest.raises((UnicodeDecodeError, pd.errors.ParserError)):
             load_recommended_from_csv(path)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_load_recommended_csv_missing_required_columns_returns_empty():
+    """CSV missing Latitude or Longitude returns empty DataFrame (required columns guard)."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("foo,bar\n")
+        f.write("1,2\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert result.empty
+        assert list(result.columns) == ["Latitude", "Longitude", "ZIP", "predicted_prob", "Location"]
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_load_recommended_one_row_with_cell_id():
+    """One-shot: single row with cell_id maps to correct ZIP label."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude,predicted_prob,Location,cell_id\n")
+        f.write("47.6062,-122.3321,0.85,Sample location,42\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert len(result) == 1
+        assert result["ZIP"].iloc[0] == "Cell 42"
+        assert result["predicted_prob"].iloc[0] == 0.85
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -282,28 +256,11 @@ def test_geoms_to_plotly_skips_none_and_empty():
     assert lats == [0, 1, None]
 
 
-def test_geoms_to_plotly_edge_single_point_linestring():
-    """LineString with two identical points (minimal valid) converts correctly."""
+def test_geoms_to_plotly_edge_all_invalid_returns_none():
+    """Edge: iterable of only None/empty geometries returns (None, None)."""
     from shapely.geometry import LineString
-    geom = LineString([(1.5, 2.5), (1.5, 2.5)])
-    lons, lats = geoms_to_plotly([geom])
-    assert lons == [1.5, 1.5, None]
-    assert lats == [2.5, 2.5, None]
-
-
-def test_geoms_to_plotly_edge_all_none():
-    """Iterable of only None values returns (None, None)."""
-    result = geoms_to_plotly([None, None, None])
+    result = geoms_to_plotly([None, LineString(), None])
     assert result == (None, None)
-
-
-def test_geoms_to_plotly_one_shot():
-    """One-shot: one LineString, one expected output."""
-    from shapely.geometry import LineString
-    geom = LineString([(0, 0), (1, 1)])
-    lons, lats = geoms_to_plotly([geom])
-    assert lons == [0, 1, None]
-    assert lats == [0, 1, None]
 
 
 def test_geoms_to_plotly_raises_on_invalid_geometry_type():
@@ -316,6 +273,332 @@ def test_geoms_to_plotly_raises_on_string_instead_of_geom():
     """String instead of geometry raises AttributeError."""
     with pytest.raises(AttributeError):
         geoms_to_plotly(["not a geometry"])
+
+
+# ── get_recommended_stations ──────────────────────────────────────────────────
+
+@patch("ml_model.load_recommended_from_csv")
+def test_get_recommended_stations_returns_loaded_data(mock_load):
+    """get_recommended_stations returns whatever load_recommended_from_csv returns."""
+    expected = pd.DataFrame({
+        "Latitude": [47.6],
+        "Longitude": [-122.3],
+        "ZIP": ["Cell 0"],
+        "predicted_prob": [0.9],
+        "Location": ["Grid cell 0"],
+    })
+    mock_load.return_value = expected
+    result = get_recommended_stations()
+    assert len(result) == 1
+    assert result["predicted_prob"].iloc[0] == 0.9
+
+
+@patch("ml_model.load_recommended_from_csv")
+def test_get_recommended_stations_empty_when_no_data(mock_load):
+    """One-shot: when CSV missing or empty, get_recommended_stations returns empty."""
+    mock_load.return_value = EMPTY_RECOMMENDED.copy()
+    result = get_recommended_stations()
+    assert result.empty
+    assert list(result.columns) == ["Latitude", "Longitude", "ZIP", "predicted_prob", "Location"]
+
+
+# ── get_electric_lines_for_map ────────────────────────────────────────────────
+
+@patch("ml_model.geoms_to_plotly")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_get_electric_lines_missing_cache_returns_none(mock_isfile, mock_read, mock_geoms):
+    """When cache file does not exist, returns (None, None)."""
+    mock_isfile.return_value = False
+    result = get_electric_lines_for_map()
+    assert result == (None, None)
+    mock_read.assert_not_called()
+    mock_geoms.assert_not_called()
+
+
+@patch("ml_model.geoms_to_plotly")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_get_electric_lines_valid_cache_returns_oh_ug_tuples(mock_isfile, mock_read, mock_geoms):
+    """When cache has data, returns (oh_lons/lats, ug_lons/lats) from geoms_to_plotly."""
+    import geopandas as gpd
+    mock_isfile.return_value = True
+    mock_read.return_value = gpd.GeoDataFrame({
+        "geometry": [None],
+        "ConductorType1": ["OH"],
+    })
+    mock_geoms.side_effect = [([0, 1, None], [2, 3, None]), (None, None)]
+    oh, ug = get_electric_lines_for_map()
+    assert oh == ([0, 1, None], [2, 3, None])
+    assert ug == (None, None)
+
+
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_get_electric_lines_empty_cache_returns_none(mock_isfile, mock_read):
+    """Edge: cache file exists but is empty (e.g. corrupted or just created)."""
+    import geopandas as gpd
+    mock_isfile.return_value = True
+    mock_read.return_value = gpd.GeoDataFrame()
+    result = get_electric_lines_for_map()
+    assert result == (None, None)
+
+
+# ── get_zip_predictions ──────────────────────────────────────────────────────
+
+def test_get_zip_predictions_empty_dataframe():
+    """Empty scored_df returns empty DataFrame with ZIP and predicted_prob columns."""
+    result = get_zip_predictions(pd.DataFrame())
+    assert result.empty
+    assert list(result.columns) == ["ZIP", "predicted_prob"]
+
+
+def test_get_zip_predictions_missing_station_count_column():
+    """scored_df without station_count returns empty DataFrame."""
+    scored = pd.DataFrame({"ZIP": ["98105"], "mean_ADT": [1000]})
+    result = get_zip_predictions(scored)
+    assert result.empty
+    assert list(result.columns) == ["ZIP", "predicted_prob"]
+
+
+@patch("ml_model._prepare_features")
+@patch("ml_model._get_or_train_model")
+def test_get_zip_predictions_returns_probs_for_each_zip(mock_get_model, mock_prepare):
+    """get_zip_predictions returns predicted_prob for each ZIP when model predicts."""
+    import numpy as np
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "station_count": [2, 0],
+    })
+    mock_model = MagicMock()
+    mock_model.predict_proba.return_value = np.array([[0.2, 0.8], [0.7, 0.3]])
+    mock_model.classes_ = np.array([0, 1])
+    mock_get_model.return_value = (mock_model, MagicMock())
+    mock_prepare.return_value = pd.DataFrame({
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+        "dist_to_major_road": [50, 100],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result = get_zip_predictions(scored)
+    assert len(result) == 2
+    assert list(result["ZIP"]) == ["98105", "98122"]
+    assert result["predicted_prob"].tolist() == [0.8, 0.3]
+    mock_get_model.assert_called_once()
+    mock_prepare.assert_called()
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_trains_and_returns_valid_probs(
+    mock_power, mock_roads, mock_zoning
+):
+    """
+    One-shot: get_zip_predictions with mocked feature loaders trains model and
+    returns valid probabilities. Exercises real _train_model and _prepare_features.
+    """
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "station_count": [1, 0],
+    })
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "dist_to_major_road": [50.0, 100.0],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result = get_zip_predictions(scored)
+    assert len(result) == 2
+    assert list(result["ZIP"]) == ["98105", "98122"]
+    assert "predicted_prob" in result.columns
+    assert all(0 <= p <= 1 for p in result["predicted_prob"])
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_handles_missing_features_gracefully(
+    mock_power, mock_roads, mock_zoning
+):
+    """
+    Exception: when feature loaders return empty (e.g. geo files missing),
+    get_zip_predictions still returns valid output with zeros for features.
+    """
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105"],
+        "station_count": [1],
+    })
+    mock_power.return_value = pd.DataFrame(
+        columns=["ZIP", "total_power_line_length", "pct_underground_power"]
+    )
+    mock_roads.return_value = pd.DataFrame(columns=["ZIP", "dist_to_major_road"])
+    mock_zoning.return_value = pd.DataFrame(columns=["ZIP", "pct_multifamily"])
+    result = get_zip_predictions(scored)
+    assert len(result) == 1
+    assert result["ZIP"].iloc[0] == "98105"
+    assert 0 <= result["predicted_prob"].iloc[0] <= 1
+
+
+# ── ML model: determinism, probability bounds, model selection ─────────────────
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_deterministic(mock_power, mock_roads, mock_zoning):
+    """Same input yields same output (random_state=42)."""
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "station_count": [1, 0],
+    })
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "dist_to_major_road": [50.0, 100.0],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result1 = get_zip_predictions(scored)
+    result2 = get_zip_predictions(scored)
+    pd.testing.assert_frame_equal(result1, result2)
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_all_probs_in_valid_range(mock_power, mock_roads, mock_zoning):
+    """All predicted_prob values are in [0, 1]."""
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122", "98101"],
+        "station_count": [1, 0, 1],
+    })
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122", "98101"],
+        "total_power_line_length": [100, 200, 50],
+        "pct_underground_power": [0.5, 0.3, 0.8],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122", "98101"],
+        "dist_to_major_road": [50.0, 100.0, 25.0],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122", "98101"],
+        "pct_multifamily": [0.2, 0.4, 0.6],
+    })
+    result = get_zip_predictions(scored)
+    assert all(0 <= p <= 1 for p in result["predicted_prob"])
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_model_selection_all_stations(mock_power, mock_roads, mock_zoning):
+    """When all ZIPs have stations, DummyClassifier path: all probs = 1."""
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "station_count": [2, 1],
+    })
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "dist_to_major_road": [50.0, 100.0],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result = get_zip_predictions(scored)
+    assert list(result["predicted_prob"]) == [1.0, 1.0]
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_get_zip_predictions_model_selection_no_stations(mock_power, mock_roads, mock_zoning):
+    """When no ZIPs have stations, DummyClassifier path: all probs = 0."""
+    import ml_model as m
+    m._model_cache.clear()
+    m._feature_cache.clear()
+    scored = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "station_count": [0, 0],
+    })
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "dist_to_major_road": [50.0, 100.0],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105", "98122"],
+        "pct_multifamily": [0.2, 0.4],
+    })
+    result = get_zip_predictions(scored)
+    assert list(result["predicted_prob"]) == [0.0, 0.0]
+
+
+# ── Geospatial: coordinate order, bounds ──────────────────────────────────────
+
+def test_geoms_to_plotly_coordinate_order_lon_lat():
+    """Geoms use (lon, lat) order; geoms_to_plotly returns lons, lats correctly."""
+    from shapely.geometry import LineString
+    geom = LineString([(-122.33, 47.61), (-122.32, 47.62)])
+    lons, lats = geoms_to_plotly([geom])
+    assert lons[0] == -122.33
+    assert lats[0] == 47.61
+    assert lons[1] == -122.32
+    assert lats[1] == 47.62
+
+
+def test_load_recommended_coordinates_in_seattle_bounds():
+    """Loaded recommended locations have lat/lon within Seattle extent."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude,predicted_prob,Location,cell_id\n")
+        f.write("47.6062,-122.3321,0.85,Test,0\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert len(result) == 1
+        lat, lon = result["Latitude"].iloc[0], result["Longitude"].iloc[0]
+        assert 47.4 <= lat <= 47.8
+        assert -122.6 <= lon <= -122.1
+    finally:
+        Path(path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
