@@ -1,8 +1,8 @@
 """
 Unit tests for Prediction tab logic (app_v2 Tab 3) and ml_model helpers.
 
-Tests core behavior: filtering, loading CSV, geoms conversion, and predictions.
-Run from project root: pytest tests/test_ml_model.py -v
+Includes edge tests, one-shot tests, and exception tests.
+Run from project root: pytest tests/test_prediction.py -v
 """
 
 import sys
