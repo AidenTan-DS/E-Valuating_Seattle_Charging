@@ -118,7 +118,9 @@ def test_get_eval_map_base_structure():
     zip_tuple = ('98105', '98122')
     fig = get_eval_map_base(sample_gdf, zip_tuple)
     assert len(fig.data) >= 1
-    assert isinstance(fig.data[0], go.Choroplethmap)
+    # Accept Choroplethmap (new) or Choroplethmapbox (legacy) for Plotly version compatibility
+    trace = fig.data[0]
+    assert type(trace).__name__ in ("Choroplethmap", "Choroplethmapbox")
 
 
 def test_build_main_map_structure():
@@ -139,8 +141,9 @@ def test_build_main_map_structure():
     geojson = {'type': 'FeatureCollection', 'features': []}
     fig = build_main_map(ev_df, scored, geojson, '98101')
     assert len(fig.data) >= 2
-    assert isinstance(fig.data[0], go.Choroplethmap)
-    assert isinstance(fig.data[1], go.Scattermap)
+    # Accept Choroplethmap/Scattermap (new) or Choroplethmapbox/Scattermapbox (legacy)
+    assert type(fig.data[0]).__name__ in ("Choroplethmap", "Choroplethmapbox")
+    assert type(fig.data[1]).__name__ in ("Scattermap", "Scattermapbox")
 
 
 # zip_centroid
