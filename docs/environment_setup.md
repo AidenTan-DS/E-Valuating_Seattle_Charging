@@ -15,6 +15,14 @@ cd E-Valuating_Seattle_Charging
 
 ```bash
 conda env create -f environment.yml
-conda activate ev_env
 ```
 ### Step 3: Verify Installation
+```bash
+conda env list
+```
+ev_env should be in this list
+
+### Step 4: Activat
+```bash
+conda activate ev_env
+```
