@@ -69,7 +69,7 @@ The **Predictions** tab displays the output from our machine learning model, whi
 In this tab:
 
 - You’ll see a map visualization showing **predicted EV charging station locations** based on patterns learned from the stations that are already established.
+- The slider allows the user to filter the probability of an ev station being developed based on the model.
 - The model uses historical and geographic inputs to estimate where new charging stations would be most beneficial or likely to be placed in the future.  
-- The predicted stations are displayed alongside existing infrastructure, making it easy to compare **actual vs. predicted charging placement** and assess areas that may still be underserved.
 
 This tab gives planners and analysts a forward‑looking view of charging infrastructure needs, helping inform strategic decisions and infrastructure planning based on model projections.
