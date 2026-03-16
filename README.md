@@ -2,7 +2,7 @@
 
 ![Code Quality](https://github.com/kkatevu/E-Valuating_Seattle_Charging/workflows/Code%20Quality%20%26%20Security/badge.svg)
 [![codecov](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging/branch/main/graph/badge.svg)](https://codecov.io/gh/kkatevu/E-Valuating_Seattle_Charging)
-![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 
