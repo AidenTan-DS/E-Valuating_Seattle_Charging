@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock
 import geopandas as gpd
 import pandas as pd
 import pytest
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 
 # Add interactive_map to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "interactive_map"))
@@ -755,6 +755,283 @@ def test_load_power_line_features_exception_returns_empty(mock_read):
     result = m._load_power_line_features_by_zip()
     assert result.empty
     assert list(result.columns) == ["ZIP", "total_power_line_length", "pct_underground_power"]
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_power_line_features_success_path(mock_read, mock_sjoin):
+    """Success: _load_power_line_features returns aggregated features when geo data loads."""
+    import ml_model as m
+    m._feature_cache.clear()
+    line = LineString([(1269000, 229000), (1271000, 231000)])
+    zcta_poly = Polygon([
+        (-122.4, 47.5), (-122.2, 47.5), (-122.2, 47.7), (-122.4, 47.7)
+    ])
+    lines_gdf = gpd.GeoDataFrame({
+        "OBJECTID": [1],
+        "geometry": [line],
+        "ConductorType1": ["OH"],
+    }, crs="EPSG:2285")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [lines_gdf, zcta_gdf]
+    joined = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "line_length": [1000.0],
+        "is_underground": [0.0],
+    })
+    mock_sjoin.return_value = joined
+    result = m._load_power_line_features_by_zip()
+    assert len(result) == 1
+    assert result["ZIP"].iloc[0] == "98101"
+    assert "total_power_line_length" in result.columns
+    assert "pct_underground_power" in result.columns
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_power_line_features_missing_conductor_type_uses_zeros(mock_read, mock_sjoin):
+    """When ConductorType1 column is missing, is_underground is zeros."""
+    import ml_model as m
+    m._feature_cache.clear()
+    line = LineString([(1269000, 229000), (1271000, 231000)])
+    zcta_poly = Polygon([
+        (-122.4, 47.5), (-122.2, 47.5), (-122.2, 47.7), (-122.4, 47.7)
+    ])
+    lines_gdf = gpd.GeoDataFrame({
+        "OBJECTID": [1],
+        "geometry": [line],
+    }, crs="EPSG:2285")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [lines_gdf, zcta_gdf]
+    mock_sjoin.return_value = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "line_length": [500.0],
+        "is_underground": [0.0],
+    })
+    result = m._load_power_line_features_by_zip()
+    assert len(result) == 1
+    assert result["pct_underground_power"].iloc[0] == 0.0
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_road_features_success_path(mock_read):
+    """Success: _load_road_features returns dist_to_major_road when geo data loads."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    street_line = LineString([(5, 5), (6, 6)])
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:2285")
+    streets_gdf = gpd.GeoDataFrame({
+        "geometry": [street_line],
+    }, crs="EPSG:2285")
+    mock_read.side_effect = [zcta_gdf, streets_gdf]
+    result = m._load_road_features_by_zip()
+    assert len(result) == 1
+    assert result["ZIP"].iloc[0] == "98101"
+    assert "dist_to_major_road" in result.columns
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_road_features_with_arterial_code_filters(mock_read):
+    """When ARTERIAL_CODE exists, filters to arterials only (ARTERIAL_CODE > 0)."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    arterial_line = LineString([(5, 5), (6, 6)])
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:2285")
+    streets_gdf = gpd.GeoDataFrame({
+        "geometry": [arterial_line],
+        "ARTERIAL_CODE": [1],
+    }, crs="EPSG:2285")
+    mock_read.side_effect = [zcta_gdf, streets_gdf]
+    result = m._load_road_features_by_zip()
+    assert len(result) == 1
+    assert "dist_to_major_road" in result.columns
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_power_line_features_uses_cache(mock_read, mock_sjoin):
+    """_load_power_line_features uses cache on second call."""
+    import ml_model as m
+    m._feature_cache.clear()
+    line = LineString([(1269000, 229000), (1271000, 231000)])
+    zcta_poly = Polygon([
+        (-122.4, 47.5), (-122.2, 47.5), (-122.2, 47.7), (-122.4, 47.7)
+    ])
+    lines_gdf = gpd.GeoDataFrame({
+        "OBJECTID": [1],
+        "geometry": [line],
+        "ConductorType1": ["OH"],
+    }, crs="EPSG:2285")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [lines_gdf, zcta_gdf]
+    mock_sjoin.return_value = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "line_length": [1000.0],
+        "is_underground": [0.0],
+    })
+    m._load_power_line_features_by_zip()
+    m._load_power_line_features_by_zip()
+    assert mock_read.call_count == 2
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_road_features_empty_arterials_returns_zero(mock_read):
+    """When arterials is empty, dist_to_major_road is 0.0."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:2285")
+    streets_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:2285")
+    mock_read.side_effect = [zcta_gdf, streets_gdf]
+    result = m._load_road_features_by_zip()
+    assert len(result) == 1
+    assert result["dist_to_major_road"].iloc[0] == 0.0
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_road_features_uses_cache(mock_read):
+    """_load_road_features uses cache on second call."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    street_line = LineString([(5, 5), (6, 6)])
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:2285")
+    streets_gdf = gpd.GeoDataFrame({
+        "geometry": [street_line],
+    }, crs="EPSG:2285")
+    mock_read.side_effect = [zcta_gdf, streets_gdf]
+    m._load_road_features_by_zip()
+    m._load_road_features_by_zip()
+    assert mock_read.call_count == 2
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_road_features_exception_returns_empty(mock_read):
+    """Exception: when geo files fail, _load_road_features returns empty DataFrame."""
+    import ml_model as m
+    m._feature_cache.clear()
+    mock_read.side_effect = OSError("File not found")
+    result = m._load_road_features_by_zip()
+    assert result.empty
+    assert list(result.columns) == ["ZIP", "dist_to_major_road"]
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_zoning_features_uses_cache(mock_read, mock_sjoin):
+    """_load_zoning_features uses cache on second call."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zone_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zoning_gdf = gpd.GeoDataFrame({
+        "ZONE_TYPE": ["MF"],
+        "geometry": [zone_poly],
+    }, crs="EPSG:4326")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [zoning_gdf, zcta_gdf]
+    mock_sjoin.return_value = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "zone_area": [100.0],
+        "is_multifamily": [1],
+        "multifamily_area": [100.0],
+    })
+    m._load_zoning_features_by_zip()
+    m._load_zoning_features_by_zip()
+    assert mock_read.call_count == 2
+
+
+@patch("ml_model.gpd.read_file")
+def test_load_zoning_features_exception_returns_empty(mock_read):
+    """Exception: when geo files fail, _load_zoning_features returns empty DataFrame."""
+    import ml_model as m
+    m._feature_cache.clear()
+    mock_read.side_effect = OSError("File not found")
+    result = m._load_zoning_features_by_zip()
+    assert result.empty
+    assert list(result.columns) == ["ZIP", "pct_multifamily"]
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_zoning_features_success_path(mock_read, mock_sjoin):
+    """Success: _load_zoning_features returns pct_multifamily when geo data loads."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zone_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zoning_gdf = gpd.GeoDataFrame({
+        "ZONE_TYPE": ["MF"],
+        "geometry": [zone_poly],
+    }, crs="EPSG:4326")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [zoning_gdf, zcta_gdf]
+    mock_sjoin.return_value = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "zone_area": [100.0],
+        "is_multifamily": [1],
+        "multifamily_area": [100.0],
+    })
+    result = m._load_zoning_features_by_zip()
+    assert len(result) == 1
+    assert result["ZIP"].iloc[0] == "98101"
+    assert "pct_multifamily" in result.columns
+
+
+@patch("ml_model.gpd.sjoin")
+@patch("ml_model.gpd.read_file")
+def test_load_zoning_features_uses_zonelut_when_no_zone_type(mock_read, mock_sjoin):
+    """When ZONE_TYPE missing, uses ZONELUT with MF regex."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zone_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zcta_poly = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    zoning_gdf = gpd.GeoDataFrame({
+        "ZONELUT": ["MF-50"],
+        "geometry": [zone_poly],
+    }, crs="EPSG:4326")
+    zcta_gdf = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98101"],
+        "geometry": [zcta_poly],
+    }, crs="EPSG:4326")
+    mock_read.side_effect = [zoning_gdf, zcta_gdf]
+    mock_sjoin.return_value = gpd.GeoDataFrame({
+        "ZIP": ["98101"],
+        "zone_area": [100.0],
+        "is_multifamily": [1],
+        "multifamily_area": [100.0],
+    })
+    result = m._load_zoning_features_by_zip()
+    assert len(result) == 1
 
 
 @patch("ml_model._prepare_features")
