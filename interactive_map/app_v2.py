@@ -340,7 +340,7 @@ def zip_centroid(_zcta_gdf, zip_code):
 def get_eval_map_base(_zcta_gdf, zip_tuple):
     """Generates static background of the evaluation map."""
     fig = go.Figure()
-    fig.add_trace(go.Choroplethmap(
+    fig.add_trace(go.Choroplethmapbox(
         geojson = build_geojson(_zcta_gdf, set(zip_tuple)),
         locations = list(zip_tuple),
         z = [0] * len(zip_tuple),
@@ -397,7 +397,7 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
     zip_list = scored["ZIP"].tolist()
     sel_idx  = zip_list.index(selected_zip) if selected_zip in zip_list else None
 
-    fig = go.Figure(go.Choroplethmap(
+    fig = go.Figure(go.Choroplethmapbox(
         geojson        = geojson,
         locations      = scored["ZIP"],
         z              = scored["mean_ADT"],
@@ -423,7 +423,7 @@ def build_main_map(ev_df, scored, geojson, selected_zip):
     ))
 
     seattle_ev = ev_df[ev_df["ZIP"].isin(set(scored["ZIP"]))].copy()
-    fig.add_trace(go.Scattermap(
+    fig.add_trace(go.Scattermapbox(
         lat  = seattle_ev["Latitude"],
         lon  = seattle_ev["Longitude"],
         mode = "markers",
@@ -476,7 +476,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=t
 
     # ZIP boundary fill
     if zip_gj:
-        fig.add_trace(go.Choroplethmap(
+        fig.add_trace(go.Choroplethmapbox(
             geojson           = zip_gj,
             locations         = [zip_code],
             z                 = [1],
@@ -533,7 +533,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=t
             lons_line.extend(lons)
             lats_line.extend(lats)
 
-        fig.add_trace(go.Scattermap(
+        fig.add_trace(go.Scattermapbox(
             lat=lats_line, lon=lons_line, mode="lines",
             line={"width": ADT_WIDTHS[i], "color": ADT_COLORS[i]},
             name=f"ADT {ADT_LABELS[i]}",
@@ -549,7 +549,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=t
             f"ADT: <b>{row['plot_adt']:,.0f}</b> vehicles/day"
             for _, row in subset.iterrows()
         ]
-        fig.add_trace(go.Scattermap(
+        fig.add_trace(go.Scattermapbox(
             lat=mid_lats, lon=mid_lons, mode="markers",
             marker={"size":16, "color":ADT_COLORS[i], "opacity":0},
             text=hover_texts,
@@ -562,7 +562,7 @@ def build_road_map(zip_code, streets_gdf, zcta_gdf, ev_df):  # pylint: disable=t
     # ── EV station dots ──────────────────────────────────────────────────────
     ev_zip = ev_df[ev_df["ZIP"] == zip_code]
     if not ev_zip.empty:
-        fig.add_trace(go.Scattermap(
+        fig.add_trace(go.Scattermapbox(
             lat  = ev_zip["Latitude"],
             lon  = ev_zip["Longitude"],
             mode = "markers",
@@ -650,7 +650,7 @@ def _add_zip_boundaries_to_figure(fig, zcta_gdf, valid_zips):
     """Add transparent ZIP boundary choropleth as map background."""
     geojson = cached_geojson(zcta_gdf, tuple(sorted(valid_zips)))
     fig.add_trace(
-        go.Choroplethmap(
+        go.Choroplethmapbox(
             geojson=geojson,
             locations=sorted(valid_zips),
             z=[0] * len(valid_zips),
@@ -670,7 +670,7 @@ def _add_power_lines_to_figure(fig, show_power_lines):
     oh_lines, ug_lines = load_electric_lines_map()
     if oh_lines is not None and oh_lines[0] is not None:
         fig.add_trace(
-            go.Scattermap(
+            go.Scattermapbox(
                 lat=oh_lines[1],
                 lon=oh_lines[0],
                 mode="lines",
@@ -682,7 +682,7 @@ def _add_power_lines_to_figure(fig, show_power_lines):
         )
     if ug_lines is not None and ug_lines[0] is not None:
         fig.add_trace(
-            go.Scattermap(
+            go.Scattermapbox(
                 lat=ug_lines[1],
                 lon=ug_lines[0],
                 mode="lines",
@@ -704,7 +704,7 @@ def _add_existing_stations_to_figure(fig, ev_df, valid_zips):
         "<extra></extra>"
     )
     fig.add_trace(
-        go.Scattermap(
+        go.Scattermapbox(
             lat=seattle_ev["Latitude"],
             lon=seattle_ev["Longitude"],
             mode="markers",
@@ -748,7 +748,7 @@ def _add_recommended_stations_to_figure(fig, recommended_filtered):
         "tickformat": ".0%",
     }
     fig.add_trace(
-        go.Scattermap(
+        go.Scattermapbox(
             lat=recommended_filtered["Latitude"],
             lon=recommended_filtered["Longitude"],
             mode="markers",
@@ -1006,7 +1006,7 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
             base_fig = get_eval_map_base(zcta_gdf, tuple(sorted(valid_zips)))
             eval_fig = go.Figure(base_fig)
 
-            eval_fig.add_trace(go.Scattermap(
+            eval_fig.add_trace(go.Scattermapbox(
                 lat = ev_df["Latitude"],
                 lon = ev_df["Longitude"],
                 mode = "markers",
@@ -1043,9 +1043,20 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
             })
             cols = ["ZIP", "City", "Avg Daily Flow",
                     "Population", "Density (sq/mi)", "Stations", "Score"]
+            final_df = eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True)
+
             st.dataframe(
-                eval_df[cols].sort_values("Score", ascending=False).reset_index(drop=True),
-                use_container_width=True, height=560
+                final_df,use_container_width=True, height=560
+            )
+            csv_data = final_df.to_csv(index = False).encode('utf-8')
+            dynamic_filename = f"seattle_score_t{w_traffic:.2f}_p{w_dens:.2f}_d{w_demand:.2f}.csv"
+            # Render download button: 
+            st.download_button(
+                label="📥 Download Station Scores (CSV)",
+                data=csv_data,
+                file_name=dynamic_filename,
+                mime="text/csv",
+                use_container_width=True,
             )
 
     # ── Tab 3: Prediction ───────────────────────────────────────────────────────
