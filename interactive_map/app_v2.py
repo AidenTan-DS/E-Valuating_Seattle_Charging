@@ -1066,10 +1066,8 @@ def main():  # pylint: disable=too-many-locals,too-many-statements  # Streamlit 
 
         st.info(
             "**ML-Based Station Placement Predictions**  \n"
-            "- **Amber lines** = overhead power | **Slate lines** = underground power  \n"
             "- **Green dots** = existing EV stations  \n"
-            "- **Red dots** = recommended locations (500m grid cells where the model predicts "
-            "a station should exist but none currently does.",
+            "- **Red dots** = recommended locations (locations where our model predicted an EV station, but none exist).",
             icon="🔮",
         )
 
