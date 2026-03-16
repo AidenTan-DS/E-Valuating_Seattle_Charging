@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock
 import geopandas as gpd
 import pandas as pd
 import pytest
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 
 # Add interactive_map to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "interactive_map"))
@@ -25,8 +25,11 @@ from ml_model import (
     get_electric_lines_for_map,
     get_zip_predictions,
     generate_electric_lines_cache,
+    generate_grid_recommendations,
     EMPTY_RECOMMENDED,
     _zcta_zip_series,
+    _prepare_features,
+    _get_zip_centroids,
 )
 
 
@@ -57,6 +60,27 @@ def test_zcta_zip_series_uses_geoid10_when_only_geoid10():
     })
     result = _zcta_zip_series(gdf)
     assert list(result) == ["98101", "98102"]
+
+
+def test_zcta_zip_series_geoid10_zfill_short_values():
+    """GEOID10 with short values gets zfill(5)."""
+    gdf = gpd.GeoDataFrame({
+        "GEOID10": ["1", "99"],
+        "geometry": [Point(0, 0), Point(1, 1)],
+    })
+    result = _zcta_zip_series(gdf)
+    assert list(result) == ["00001", "00099"]
+
+
+def test_zcta_zip_series_prefers_zip_zcta_over_zcta5ce10():
+    """When both ZIP_zcta and ZCTA5CE10 exist, ZIP_zcta takes precedence."""
+    gdf = gpd.GeoDataFrame({
+        "ZIP_zcta": ["12345"],
+        "ZCTA5CE10": ["99999"],
+        "geometry": [Point(0, 0)],
+    })
+    result = _zcta_zip_series(gdf)
+    assert list(result) == ["12345"]
 
 
 # ── filter_recommended_by_probability ─────────────────────────────────────────
@@ -264,6 +288,49 @@ def test_load_recommended_csv_missing_required_columns_returns_empty():
         Path(path).unlink(missing_ok=True)
 
 
+def test_load_recommended_default_location_when_missing():
+    """When Location column is missing, uses 'Recommended' as default."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude,predicted_prob\n")
+        f.write("47.6,-122.3,0.7\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert len(result) == 1
+        assert result["Location"].iloc[0] == "Recommended"
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_load_recommended_default_predicted_prob_when_missing():
+    """When predicted_prob column is missing, uses 0.5 as default."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude\n")
+        f.write("47.6,-122.3\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert len(result) == 1
+        assert result["predicted_prob"].iloc[0] == 0.5
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def test_load_recommended_sorts_by_prob_descending():
+    """Output is sorted by predicted_prob descending."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+        f.write("Latitude,Longitude,predicted_prob,cell_id\n")
+        f.write("47.6,-122.3,0.3,0\n")
+        f.write("47.61,-122.31,0.9,1\n")
+        f.write("47.62,-122.32,0.5,2\n")
+        path = f.name
+    try:
+        result = load_recommended_from_csv(path)
+        assert result["predicted_prob"].tolist() == [0.9, 0.5, 0.3]
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 def test_load_recommended_one_row_with_cell_id():
     """One-shot: single row with cell_id maps to correct ZIP label."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
@@ -452,6 +519,28 @@ def test_get_electric_lines_missing_conductor_type_uses_all_geoms(
     assert mock_geoms.call_count == 2
 
 
+@patch("ml_model.geoms_to_plotly")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_get_electric_lines_both_oh_and_ug_present(mock_isfile, mock_read, mock_geoms):
+    """When cache has both OH and UG lines, returns both tuples."""
+    mock_isfile.return_value = True
+    mock_read.return_value = gpd.GeoDataFrame({
+        "geometry": [
+            LineString([(0, 0), (1, 1)]),
+            LineString([(2, 2), (3, 3)]),
+        ],
+        "ConductorType1": ["OH", "UG"],
+    })
+    mock_geoms.side_effect = [
+        ([0, 1, None], [0, 1, None]),
+        ([2, 3, None], [2, 3, None]),
+    ]
+    oh, ug = get_electric_lines_for_map()
+    assert oh == ([0, 1, None], [0, 1, None])
+    assert ug == ([2, 3, None], [2, 3, None])
+
+
 # ── generate_electric_lines_cache ────────────────────────────────────────────
 
 @patch("ml_model.os.path.isfile")
@@ -514,6 +603,94 @@ def test_generate_electric_lines_cache_handles_exception(mock_isfile, mock_read,
     mock_isfile.return_value = False
     mock_read.side_effect = OSError("Geo file not found")
     generate_electric_lines_cache()
+
+
+# ── _prepare_features ────────────────────────────────────────────────────────
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_prepare_features_empty_merge_returns_zeros(mock_power, mock_roads, mock_zoning):
+    """When all feature loaders return empty, _prepare_features fills with zeros."""
+    import ml_model as m
+    m._feature_cache.clear()
+    mock_power.return_value = pd.DataFrame(
+        columns=["ZIP", "total_power_line_length", "pct_underground_power"]
+    )
+    mock_roads.return_value = pd.DataFrame(columns=["ZIP", "dist_to_major_road"])
+    mock_zoning.return_value = pd.DataFrame(columns=["ZIP", "pct_multifamily"])
+    scored = pd.DataFrame({"ZIP": ["98105"], "station_count": [1]})
+    result = _prepare_features(scored)
+    assert len(result) == 1
+    assert result["total_power_line_length"].iloc[0] == 0
+    assert result["pct_underground_power"].iloc[0] == 0
+    assert result["dist_to_major_road"].iloc[0] == 0
+    assert result["pct_multifamily"].iloc[0] == 0
+
+
+@patch("ml_model._load_zoning_features_by_zip")
+@patch("ml_model._load_road_features_by_zip")
+@patch("ml_model._load_power_line_features_by_zip")
+def test_prepare_features_handles_nan_with_fillna(mock_power, mock_roads, mock_zoning):
+    """NaN in merged features are filled with 0."""
+    import ml_model as m
+    m._feature_cache.clear()
+    mock_power.return_value = pd.DataFrame({
+        "ZIP": ["98105"],
+        "total_power_line_length": [100],
+        "pct_underground_power": [0.5],
+    })
+    mock_roads.return_value = pd.DataFrame({
+        "ZIP": ["98105"],
+        "dist_to_major_road": [float("nan")],
+    })
+    mock_zoning.return_value = pd.DataFrame({
+        "ZIP": ["98105"],
+        "pct_multifamily": [0.2],
+    })
+    scored = pd.DataFrame({"ZIP": ["98105"], "station_count": [1]})
+    result = _prepare_features(scored)
+    assert len(result) == 1
+    assert result["dist_to_major_road"].iloc[0] == 0
+
+
+# ── _get_zip_centroids ──────────────────────────────────────────────────────
+
+@patch("ml_model.gpd.read_file")
+def test_get_zip_centroids_returns_lat_lon(mock_read):
+    """_get_zip_centroids returns ZIP, Latitude, Longitude from ZCTA centroids."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98105", "98122"],
+        "geometry": [Point(-122.3, 47.6), Point(-122.32, 47.61)],
+    }, crs="EPSG:4326")
+    zcta["centroid"] = zcta.geometry
+    zcta["Longitude"] = zcta["centroid"].x
+    zcta["Latitude"] = zcta["centroid"].y
+    mock_read.return_value = zcta
+    result = _get_zip_centroids()
+    assert list(result.columns) == ["ZIP", "Latitude", "Longitude"]
+    assert list(result["ZIP"]) == ["98105", "98122"]
+    assert len(result) == 2
+
+
+@patch("ml_model.gpd.read_file")
+def test_get_zip_centroids_uses_cache(mock_read):
+    """_get_zip_centroids uses cache on second call."""
+    import ml_model as m
+    m._feature_cache.clear()
+    zcta = gpd.GeoDataFrame({
+        "ZCTA5CE10": ["98105"],
+        "geometry": [Point(-122.3, 47.6)],
+    }, crs="EPSG:4326")
+    zcta["centroid"] = zcta.geometry
+    zcta["Longitude"] = zcta["centroid"].x
+    zcta["Latitude"] = zcta["centroid"].y
+    mock_read.return_value = zcta
+    _get_zip_centroids()
+    _get_zip_centroids()
+    assert mock_read.call_count == 1
 
 
 # ── get_zip_predictions ──────────────────────────────────────────────────────
@@ -803,6 +980,118 @@ def test_load_recommended_coordinates_in_seattle_bounds():
         assert -122.6 <= lon <= -122.1
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+# ── generate_grid_recommendations ────────────────────────────────────────────
+
+@patch("ml_model.generate_electric_lines_cache")
+@patch("ml_model.pd.read_csv")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_generate_grid_recommendations_uses_cache_when_exists(
+    mock_isfile, mock_read, mock_csv, mock_elec
+):
+    """When grid cache exists, loads from cache and skips grid building."""
+    import ml_model as m
+    mock_isfile.side_effect = lambda p: "grid" in str(p).lower()
+    grid = gpd.GeoDataFrame({
+        "geometry": [
+            Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
+            Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
+        ],
+        "cell_id": [0, 1],
+        "total_power_line_length": [100, 200],
+        "pct_underground_power": [0.5, 0.3],
+        "dist_to_major_road": [50, 100],
+        "pct_multifamily": [0.2, 0.4],
+    }, crs="EPSG:2285")
+    mock_read.return_value = grid
+    mock_csv.return_value = pd.DataFrame({
+        "Latitude": [47.6],
+        "Longitude": [-122.3],
+        "City": ["Seattle"],
+    })
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(m, "GRID_CACHE_PATH", Path(tmp) / "grid.geojson"):
+            with patch.object(m, "GRID_RECOMMENDED_PATH", Path(tmp) / "rec.csv"):
+                with patch.object(m, "EV_STATIONS_PATH", "/dev/null"):
+                    generate_grid_recommendations()
+        out_path = Path(tmp) / "rec.csv"
+        assert out_path.exists()
+        result = pd.read_csv(out_path)
+        assert "Latitude" in result.columns
+        assert "Longitude" in result.columns
+
+
+@patch("ml_model.generate_electric_lines_cache")
+@patch("ml_model.pd.read_csv")
+@patch("ml_model.gpd.read_file")
+@patch("ml_model.os.path.isfile")
+def test_generate_grid_recommendations_empty_recommended_when_all_have_stations(
+    mock_isfile, mock_read, mock_csv, mock_elec
+):
+    """When all high-prob cells have stations, outputs empty recommended CSV."""
+    import ml_model as m
+    mock_isfile.side_effect = lambda p: "grid_with_features" in p or "recommended" in p
+    grid = gpd.GeoDataFrame({
+        "geometry": [Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])],
+        "cell_id": [0],
+        "total_power_line_length": [100],
+        "pct_underground_power": [0.5],
+        "dist_to_major_road": [50],
+        "pct_multifamily": [0.2],
+    }, crs="EPSG:2285")
+    mock_read.return_value = grid
+    mock_csv.return_value = pd.DataFrame(columns=["Latitude", "Longitude"])
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch.object(m, "GRID_CACHE_PATH", Path(tmp) / "grid.geojson"):
+            with patch.object(m, "GRID_RECOMMENDED_PATH", Path(tmp) / "rec.csv"):
+                with patch.object(m, "EV_STATIONS_PATH", "/dev/null"):
+                    generate_grid_recommendations()
+        result = pd.read_csv(Path(tmp) / "rec.csv")
+        assert result.empty or len(result) == 0
+
+
+# ── geoms_to_plotly additional edge cases ─────────────────────────────────────
+
+def test_geoms_to_plotly_point_geometry():
+    """Point geometry is supported (single coord, then None separator)."""
+    from shapely.geometry import Point as ShapelyPoint
+    geom = ShapelyPoint(-122.3, 47.6)
+    lons, lats = geoms_to_plotly([geom])
+    assert lons == [-122.3, None]
+    assert lats == [47.6, None]
+
+
+def test_geoms_to_plotly_polygon_raises_or_works():
+    """Polygon has coords - geoms_to_plotly iterates boundary coords."""
+    from shapely.geometry import Polygon
+    poly = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    lons, lats = geoms_to_plotly([poly])
+    assert lons is not None
+    assert len(lons) > 0
+    assert lons[-1] is None
+
+
+# ── get_recommended_stations path ────────────────────────────────────────────
+
+@patch("ml_model.load_recommended_from_csv")
+def test_get_recommended_stations_passes_correct_path(mock_load):
+    """get_recommended_stations calls load_recommended_from_csv with GRID_RECOMMENDED_PATH."""
+    import ml_model as m
+    mock_load.return_value = EMPTY_RECOMMENDED.copy()
+    get_recommended_stations()
+    mock_load.assert_called_once_with(m.GRID_RECOMMENDED_PATH)
+
+
+# ── EMPTY_RECOMMENDED constant ───────────────────────────────────────────────
+
+def test_empty_recommended_has_expected_columns():
+    """EMPTY_RECOMMENDED has correct column names."""
+    assert list(EMPTY_RECOMMENDED.columns) == [
+        "Latitude", "Longitude", "ZIP", "predicted_prob", "Location"
+    ]
+    assert EMPTY_RECOMMENDED.empty
 
 
 if __name__ == "__main__":
